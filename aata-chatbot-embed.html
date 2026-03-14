@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AATA Enrollment Assistant</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    background: transparent;
+    height: 100vh;
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+  }
+
+  .chat-container {
+    width: 100%;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: #fff;
+  }
+
+  /* ── Header ── */
+  .header {
+    background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .header-avatar {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #2563eb, #3b82f6);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; flex-shrink: 0;
+  }
+  .header-text h1 { color: #fff; font-size: 16px; font-weight: 700; }
+  .header-text p { color: #94a3b8; font-size: 12px; margin-top: 2px; }
+  .status-dot {
+    margin-left: auto;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: #22c55e;
+    box-shadow: 0 0 8px #22c55e;
+  }
+
+  /* ── Messages ── */
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    scroll-behavior: smooth;
+  }
+  .message {
+    display: flex;
+    margin-bottom: 14px;
+    animation: fadeIn 0.3s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .message.user { justify-content: flex-end; }
+  .message.assistant { justify-content: flex-start; }
+  .bot-avatar {
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #1e3a5f, #2563eb);
+    display: flex; align-items: center; justify-content: center;
+    margin-right: 8px; flex-shrink: 0; margin-top: 4px;
+    font-size: 13px;
+  }
+  .bubble {
+    max-width: 80%;
+    padding: 10px 14px;
+    font-size: 14px;
+    line-height: 1.55;
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+  .message.user .bubble {
+    background: #2563eb;
+    color: #fff;
+    border-radius: 16px 16px 4px 16px;
+  }
+  .message.assistant .bubble {
+    background: #f1f5f9;
+    color: #1e293b;
+    border-radius: 16px 16px 16px 4px;
+  }
+  .bubble strong { font-weight: 600; }
+  .bubble a { color: #2563eb; text-decoration: underline; }
+
+  /* ── Typing indicator ── */
+  .typing { display: flex; gap: 5px; padding: 10px 0; align-items: center; }
+  .typing-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #94a3b8;
+    animation: bounce 1.4s infinite;
+  }
+  .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+  .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes bounce {
+    0%, 60%, 100% { transform: translateY(0); }
+    30% { transform: translateY(-8px); }
+  }
+
+  /* ── Quick questions ── */
+  .quick-questions {
+    padding: 4px 16px 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .quick-btn {
+    padding: 6px 13px;
+    border-radius: 20px;
+    border: 1px solid #cbd5e1;
+    background: #f8fafc;
+    color: #475569;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .quick-btn:hover {
+    background: #e0e7ff;
+    border-color: #818cf8;
+    color: #3730a3;
+  }
+
+  /* ── Input area ── */
+  .input-area {
+    padding: 12px 16px;
+    border-top: 1px solid #e2e8f0;
+    display: flex;
+    gap: 8px;
+    background: #f8fafc;
+  }
+  .input-area input {
+    flex: 1;
+    padding: 10px 16px;
+    border-radius: 24px;
+    border: 1px solid #cbd5e1;
+    font-size: 14px;
+    outline: none;
+    background: #fff;
+    transition: border-color 0.15s;
+  }
+  .input-area input:focus { border-color: #2563eb; }
+  .send-btn {
+    width: 42px; height: 42px;
+    border-radius: 50%;
+    border: none;
+    background: #cbd5e1;
+    color: #fff;
+    font-size: 18px;
+    cursor: default;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+    flex-shrink: 0;
+  }
+  .send-btn.active {
+    background: #2563eb;
+    cursor: pointer;
+  }
+  .send-btn.active:hover { background: #1d4ed8; }
+
+  .footer {
+    text-align: center;
+    padding: 6px 0 10px;
+    font-size: 11px;
+    color: #94a3b8;
+    background: #f8fafc;
+  }
+
+  /* ── Salesforce Flow Iframe Styles ── */
+  .sf-flow-wrapper {
+    max-width: 92%;
+    animation: fadeIn 0.3s ease;
+  }
+  .sf-flow-container {
+    background: #fff;
+    border: 2px solid #00AEEF;
+    border-radius: 12px;
+    overflow: hidden;
+    margin-top: 4px;
+    box-shadow: 0 2px 12px rgba(0,174,239,0.15);
+  }
+  .sf-flow-header {
+    text-align: center;
+    color: #00AEEF;
+    font-size: 15px;
+    font-weight: 700;
+    padding: 12px 16px 8px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  .sf-flow-iframe {
+    width: 100%;
+    min-height: 600px;
+    border: none;
+    display: block;
+  }
+  .sf-flow-note {
+    text-align: center;
+    font-size: 11px;
+    color: #64748b;
+    padding: 8px;
+    border-top: 1px solid #e2e8f0;
+    line-height: 1.4;
+  }
+  .sf-flow-loading {
+    text-align: center;
+    padding: 40px 16px;
+    color: #64748b;
+    font-size: 14px;
+  }
+  .sf-flow-loading .spinner {
+    display: inline-block;
+    width: 32px; height: 32px;
+    border: 3px solid #e2e8f0;
+    border-top-color: #00AEEF;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 12px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .flow-done-btn {
+    display: block;
+    margin: 10px auto;
+    padding: 10px 24px;
+    background: #22c55e;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .flow-done-btn:hover { background: #16a34a; }
+</style>
+</head>
+<body>
+
+<div class="chat-container" id="app">
+  <div class="header">
+    <div class="header-avatar">✈️</div>
+    <div class="header-text">
+      <h1>AATA Enrollment Assistant</h1>
+      <p>American Aerospace Technical Academy</p>
+    </div>
+    <div class="status-dot"></div>
+  </div>
+
+  <div class="messages" id="messages"></div>
+
+  <div class="quick-questions" id="quickQuestions">
+    <button class="quick-btn" onclick="sendQuick(this)">When is the next class?</button>
+    <button class="quick-btn" onclick="sendQuick(this)">I'm ready to enroll!</button>
+    <button class="quick-btn" onclick="sendQuick(this)">Is tuition really free?</button>
+    <button class="quick-btn" onclick="sendQuick(this)">What programs do you offer?</button>
+    <button class="quick-btn" onclick="sendQuick(this)">What careers can I get after?</button>
+    <button class="quick-btn" onclick="sendQuick(this)">Talk to someone</button>
+  </div>
+
+  <div class="input-area">
+    <input type="text" id="userInput" placeholder="Ask about enrollment, programs, tuition..." onkeydown="handleKey(event)" oninput="updateSend()" />
+    <button class="send-btn" id="sendBtn" onclick="sendMessage()">➤</button>
+  </div>
+  <div class="footer">Powered by AATA • www.aatatraining.org</div>
+</div>
+
+<script>
+// ============================================================
+// CONFIGURATION
+// ============================================================
+let config = {
+  mode: "direct",
+  apiKey: "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",
+  proxyUrl: "/api/chat",
+  salesforceFlowUrl: "https://americanaerospacetechnicalacademy.my.site.com/enroll",
+};
+let conversationHistory = [];
+let isTyping = false;
+let messageCount = 0;
+
+const SYSTEM_PROMPT = `You are the official Enrollment Assistant for the American Aerospace Technical Academy (AATA). You help prospective students learn about AATA's programs and guide them step-by-step through the enrollment process. Be warm, encouraging, and professional. Keep responses concise but thorough.
+
+## ABOUT AATA
+- Full name: American Aerospace Technical Academy (AATA)
+- Type: 501(c)(3) nonprofit, founded April 2015
+- Mission: Empower individuals through free Nondestructive Testing (NDT) training and career development
+- Founded by John Stewart, who has trained technicians for SpaceX, Goodrich Aerospace, and Northrop Grumman
+- Locations: Los Angeles, California and Houston, Texas (ASNT Houston facility)
+- Website: www.aatatraining.org
+
+## PROGRAMS
+- AATA offers a comprehensive 400-hour Instructor-led online NDT (Nondestructive Testing) training program
+- Students receive Level I and Level II certifications
+- The program is available 100% online via live video conference, Monday-Friday
+- California classes are fully online with an optional 1-week hands-on in-person workshop
+- There is NO difference in curriculum between Day and Night classes — only the number of weeks differs due to hours per day
+
+### NDT Methods Covered (400 hours total):
+1. Liquid Penetrant Testing (PT) - Level 1 & 2 - 40 hours
+2. Magnetic Particle Testing (MT) - Level 1 & 2 - 40 hours
+3. Ultrasonic Testing (UT) - Level 1 & 2 - 80 hours
+4. Phased Array Ultrasonic Testing (PAUT) - Intro - 40 hours
+5. Radiographic Testing (RT) - Level 1 & 2 - 80 hours
+6. Radiation Safety - 40 hours
+7. Visual Testing (VT) - Level 1 & 2 - 40 hours
+8. Computed Radiography / Digital Radiography (CR/DR) - Intro - 40 hours
+
+### College Credits
+- Students enroll through Foothill College
+- Eligible to receive 26 college credits toward a future Associate's or Bachelor's degree at Foothill College
+
+## UPCOMING CLASSES
+There are two class options available:
+
+### Night Class (15 spots left)
+- Schedule: 5 PM to 10 PM PST, Monday through Friday
+- Dates: April 27, 2026 – August 28, 2026 (16 weeks)
+
+### Day Class (10 spots left)
+- Schedule: 8 AM to 4 PM PST, Monday through Friday
+- Dates: April 20, 2026 – June 26, 2026 (10 weeks)
+
+IMPORTANT: Spots are limited. Always mention how many spots are left to create urgency. If a student is interested, encourage them to start the enrollment steps immediately.
+
+## TUITION & COSTS
+- California Residents: Tuition is FREE. The $7,495 course fee is fully waived.
+- Texas Residents: Funding available — contact Patrick Kratochvil at (281) 676-0356 or patrickaata@gmail.com for details
+- Only additional cost: $325 book fee for ASNT books (brand new hard copies shipped directly from ASNT to student's home via FedEx)
+- Book fee can be paid in one installment OR split into two equal payments ($162.50 each)
+- Out-of-State Residents: Funding is handled on a case-by-case basis. If someone from out of state asks about funding (including veterans), direct them to leave a message at https://www.aatatraining.org/apply
+- IMPORTANT: Do NOT proactively mention veteran-specific funding. There is currently no dedicated veteran funding program. If a veteran from out of state specifically asks about veteran funding, explain that funding is handled case by case and direct them to https://www.aatatraining.org/apply
+
+### Book Fee Payment Methods:
+- Zelle / Apple Cash: 424-385-1149
+- Cash App: $WaghNDT
+- PayPal: https://paypal.me/ppwagh
+- Credit Card: https://wise.com/pay/r/8-psp-TnrS8wMEU
+
+## ENROLLMENT REQUIREMENTS
+- Prerequisites: NONE - just have a drive to learn
+- California residents: Tuition is FREE
+- Texas residents: Funding available through Patrick Kratochvil
+- No specific degree or diploma needed
+- No prior NDT experience required
+- Must be 18+
+
+## GUIDED ENROLLMENT PROCESS (3 STEPS)
+CRITICAL: When a student says they want to enroll or sign up, you MUST walk them through these 3 steps one at a time. Ask them which step they're on, or start from Step 1. Track their progress and guide them to the next step after each one.
+
+IMPORTANT WARNING TO SHARE WITH STUDENTS:
+Due to high demand, students will NOT be considered enrolled unless ALL 3 steps are completed. Indicating interest but not completing all steps will result in losing the spot. All 3 steps must be completed for enrollment to be confirmed.
+
+### Step 1: Complete the Enrollment & Apprentice Agreement Form
+- This single form captures the student's registration info AND the DAS 1 Apprentice Agreement — all in one step.
+- When the student is ready for Step 1, include the EXACT text [SHOW_ENROLLMENT_FLOW] in your response (this triggers the Salesforce enrollment form to appear inline in the chat)
+- IMPORTANT: You MUST include the literal text [SHOW_ENROLLMENT_FLOW] (with brackets) in your message when it's time for the student to fill out the form. Do not describe the form fields or link to an external page — just include the marker and the form will appear automatically.
+- Before showing the form, confirm which class they prefer:
+  * Night Class (5 PM – 10 PM PST, Apr 27 – Aug 28, 2026) - 15 spots left
+  * Day Class (8 AM – 4 PM PST, Apr 20 – Jun 26, 2026) - 10 spots left
+- The form collects: Personal info, class selection, AND the DAS Apprentice Agreement fields
+- Let the student know that their SSN is required on the DAS portion — it is a State of California government form (Division of Apprenticeship Standards)
+- The form creates a Contact record directly in Salesforce with all their information
+- After they submit, the system will automatically notify you. Then move to Step 2
+
+### Step 2: Foothill College Enrollment
+- This step is REQUIRED for ALL students, even if they do not intend to use the 26 college credits. Foothill College manages the apprenticeship program for AATA, so enrollment through Foothill is mandatory to complete the program.
+- Make sure to clearly explain this to the student so they understand why this step is necessary.
+- Guide them to apply at Foothill College for the correct term based on their class start date:
+  * Spring Term: Classes starting in April, May, or June
+- Direct them to apply here: https://www.opencccapply.net/gateway/apply?cccMisCode=422
+- If they need help with the application, share this video walkthrough: https://www.youtube.com/watch?v=le3lpewBbns
+- Once they confirm they've enrolled at Foothill, move to Step 3
+
+### Step 3: Book Fee Payment ($325)
+- The final step is paying the $325 book fee
+- Payment can be made in one installment OR split into two equal payments ($162.50 each)
+- Payment methods:
+  * Zelle / Apple Cash: 424-385-1149
+  * Cash App: $WaghNDT
+  * PayPal: https://paypal.me/ppwagh
+  * Credit Card: https://wise.com/pay/r/8-psp-TnrS8wMEU
+- Books are brand new hard copies shipped directly from ASNT to the student's home via FedEx
+
+### After All 3 Steps:
+- Once the student has completed all 3 steps, instruct them to message Pratik Wagh at +1 424-385-1149 or email trainingaata@gmail.com to confirm completion
+- Emphasize: They will NOT be considered enrolled until all steps are done and confirmed
+
+## ENROLLMENT FLOW CONVERSATION STRATEGY
+When a student says they want to enroll or are ready to sign up:
+1. First, ask: "Which state do you currently reside in?"
+2. Based on their answer:
+   - California resident → Explain tuition is FREE, then proceed with the 3-step enrollment process
+   - Texas resident → Direct them to contact Patrick Kratochvil at (281) 676-0356 or patrickaata@gmail.com for enrollment
+   - Out-of-state resident → Explain that funding is handled case by case, and direct them to leave a message at https://www.aatatraining.org/apply
+3. For CA residents: Ask which class they prefer (Day or Night) - mention spots remaining
+4. Then walk them through the 3 steps ONE AT A TIME
+5. After explaining each step, ask "Have you completed this step?" before moving to the next
+6. Keep a running summary: "Great! You've completed Step 1. Now let's move to Step 2..."
+7. If they haven't completed a step, offer to help them with it or answer questions about it
+8. After all 3 steps, congratulate them and remind them to message Pratik to confirm
+
+IMPORTANT RULES ABOUT VETERANS:
+- Do NOT ask if someone is a veteran as a qualifying question
+- Do NOT proactively mention veteran benefits or veteran-specific funding
+- If a student independently mentions they are a veteran AND asks about funding, explain that funding is handled on a case-by-case basis and direct them to https://www.aatatraining.org/apply
+- If a CA or TX resident happens to be a veteran, their state residency already qualifies them for free/funded tuition — no need to bring up veteran status
+
+## CAREER OUTLOOK
+- Some AATA graduates earn $42-$47/hour
+- With overtime, that adds up to $110,000+ annually within a couple of years of experience
+- Industries: Aerospace, aviation, oil & gas, manufacturing, construction, power generation
+
+## CONTACT
+- General / California: trainingaata@gmail.com
+- Houston / Texas: Patrick Kratochvil at (281) 676-0356 or patrickaata@gmail.com
+- Pratik Wagh (enrollment confirmation): +1 424-385-1149
+- Apply online / Leave a message: www.aatatraining.org/apply
+- Website: www.aatatraining.org
+
+## CONNECTING TO A LIVE AGENT
+If a student asks to speak with a person, be connected to an agent, or wants to talk to someone:
+- Direct them to call: 323-761-9066
+- If the call doesn't go through, ask them to email: trainingaata@gmail.com
+- Do NOT provide any other phone numbers for live agent requests — only 323-761-9066
+
+## BEHAVIOR GUIDELINES
+- IMPORTANT: Do NOT use markdown headers (# or ##) in your responses. Use **bold text** for emphasis instead.
+- Always be encouraging - many prospective students may be nervous about a career change
+- If someone is a CA resident, highlight that tuition is FREE enthusiastically
+- If someone is a TX resident, warmly direct them to Patrick Kratochvil for enrollment
+- NEVER proactively mention veteran benefits or veteran-specific funding
+- Create urgency about limited spots (mention exact spots remaining for each class)
+- When a CA student wants to enroll, ALWAYS use the guided 3-step process - don't skip steps
+- Track which steps the student has completed in the conversation
+- If you don't know something specific, direct them to contact AATA directly
+- Suggest next steps proactively after answering any question
+- Keep responses concise: 3-6 sentences for simple questions, more detail only when asked
+- Never make up information not in your knowledge base - direct to AATA contact instead
+- If asked about topics unrelated to AATA enrollment, politely redirect to enrollment topics
+- Always end responses with a suggestion for what the student should do next`;
+
+// ============================================================
+// SALESFORCE FLOW EMBED (Step 1)
+// ============================================================
+function renderEnrollmentFlow() {
+  const container = document.getElementById("messages");
+  const wrapper = document.createElement("div");
+  wrapper.className = "message assistant";
+
+  const flowUrl = config.salesforceFlowUrl;
+  const isConfigured = flowUrl && !flowUrl.includes("PASTE_YOUR");
+
+  if (!isConfigured) {
+    wrapper.innerHTML = `
+      <div class="bot-avatar">✈️</div>
+      <div class="sf-flow-wrapper">
+        <div class="sf-flow-container" style="border-color:#f59e0b;">
+          <div class="sf-flow-header" style="color:#f59e0b;">⚠️ Enrollment Form Setup Pending</div>
+          <div style="padding:20px;text-align:center;color:#64748b;font-size:13px;line-height:1.6;">
+            The Salesforce enrollment form is being set up.<br>
+            Please contact us directly to enroll:<br><br>
+            <strong>Email:</strong> trainingaata@gmail.com<br>
+            <strong>Call:</strong> 323-761-9066<br>
+            <strong>Apply online:</strong> <a href="https://www.aatatraining.org/apply" target="_blank">www.aatatraining.org/apply</a>
+          </div>
+        </div>
+      </div>
+    `;
+    container.appendChild(wrapper);
+    container.scrollTop = container.scrollHeight;
+    return;
+  }
+
+  wrapper.innerHTML = `
+    <div class="bot-avatar">✈️</div>
+    <div class="sf-flow-wrapper">
+      <div class="sf-flow-container" id="enrollmentFlowContainer">
+        <div class="sf-flow-header">📋 Step 1: Enrollment & Apprentice Agreement</div>
+        <div class="sf-flow-loading" id="flowLoading">
+          <div class="spinner"></div><br>
+          Loading enrollment form...
+        </div>
+        <iframe
+          class="sf-flow-iframe"
+          id="enrollmentFlowIframe"
+          src="${flowUrl}"
+          onload="document.getElementById('flowLoading').style.display='none';"
+          style="display:none;"
+          allow="camera; microphone"
+        ></iframe>
+        <div class="sf-flow-note">
+          This form creates your student profile and captures the DAS Apprentice Agreement.<br>
+          Your information is securely stored in AATA's Salesforce system.
+        </div>
+        <button class="flow-done-btn" onclick="handleFlowCompleted()">
+          ✅ I've submitted the form — continue to Step 2
+        </button>
+      </div>
+    </div>
+  `;
+  container.appendChild(wrapper);
+  container.scrollTop = container.scrollHeight;
+
+  const iframe = document.getElementById("enrollmentFlowIframe");
+  iframe.addEventListener("load", function() {
+    iframe.style.display = "block";
+    container.scrollTop = container.scrollHeight;
+  });
+}
+
+function handleFlowCompleted() {
+  const flowContainer = document.getElementById("enrollmentFlowContainer");
+  flowContainer.innerHTML = `
+    <div style="text-align:center;padding:20px;color:#065f46;font-weight:600;font-size:14px;">
+      ✅ Enrollment form submitted successfully!<br>
+      <span style="font-weight:400;font-size:13px;color:#475569;">Your Contact record and DAS Agreement have been saved to AATA's system.</span>
+    </div>
+  `;
+
+  conversationHistory.push({
+    role: "user",
+    content: "[SYSTEM: Student has successfully completed the Salesforce enrollment form (Step 1), which includes their registration info AND the DAS Apprentice Agreement. A Contact record has been created in Salesforce. Please congratulate them and guide them to Step 2 - Foothill College enrollment.]"
+  });
+
+  setTimeout(async () => {
+    isTyping = true;
+    showTyping();
+    const reply = await getResponse("[Student completed Step 1 — Salesforce enrollment form submitted]");
+    hideTyping();
+    renderMessage("assistant", reply);
+    isTyping = false;
+  }, 1000);
+}
+
+// ============================================================
+// CLAUDE API CALL
+// ============================================================
+async function callClaudeAPI(userMessage) {
+  conversationHistory.push({ role: "user", content: userMessage });
+
+  if (config.mode === "proxy") {
+    const res = await fetch(config.proxyUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: conversationHistory }),
+    });
+    if (!res.ok) throw new Error(`Proxy error: ${res.status}`);
+    const data = await res.json();
+    const reply = data.content?.[0]?.text || data.reply || data.message || JSON.stringify(data);
+    conversationHistory.push({ role: "assistant", content: reply });
+    return reply;
+  }
+
+  if (config.mode === "direct") {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": config.apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 1024,
+        system: SYSTEM_PROMPT,
+        messages: conversationHistory,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `API error: ${res.status}`);
+    }
+    const data = await res.json();
+    const reply = data.content[0].text;
+    conversationHistory.push({ role: "assistant", content: reply });
+    return reply;
+  }
+
+  throw new Error("No API configured");
+}
+
+// ============================================================
+// MAIN RESPONSE HANDLER
+// ============================================================
+async function getResponse(userMessage) {
+  if (config.mode === "offline") {
+    return "Please connect to Claude AI for the full enrollment experience.";
+  }
+  try {
+    return await callClaudeAPI(userMessage);
+  } catch (err) {
+    console.error("API error:", err);
+    return `⚠️ I had trouble connecting to the AI service (${err.message}). Please try again or contact us directly at trainingaata@gmail.com or 323-761-9066.`;
+  }
+}
+
+// ============================================================
+// UI LOGIC
+// ============================================================
+function renderMessage(role, text) {
+  if (role !== "assistant") {
+    renderMessageBubble(role, text);
+    return;
+  }
+
+  let remaining = text;
+
+  if (remaining.includes("[SHOW_ENROLLMENT_FLOW]")) {
+    const parts = remaining.split("[SHOW_ENROLLMENT_FLOW]");
+    if (parts[0].trim()) renderMessageBubble(role, parts[0].trim());
+    renderEnrollmentFlow();
+    remaining = parts[1] || "";
+  }
+
+  if (remaining.trim()) {
+    renderMessageBubble(role, remaining.trim());
+  }
+}
+
+function renderMessageBubble(role, text) {
+  const container = document.getElementById("messages");
+  const div = document.createElement("div");
+  div.className = `message ${role}`;
+
+  let html = "";
+  if (role === "assistant") {
+    html += '<div class="bot-avatar">✈️</div>';
+  }
+
+  let formatted = text
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/^#{1,4}\s+(.+)$/gm, "<strong>$1</strong>")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/^\s*[-•]\s+/gm, "• ")
+    .replace(/^\s*\d+\.\s+/gm, function(match) { return match.trim() + " "; })
+    .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank">$1</a>')
+    .replace(/(www\.[^\s<]+)/g, '<a href="https://$1" target="_blank">$1</a>');
+
+  html += `<div class="bubble">${formatted}</div>`;
+  div.innerHTML = html;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  messageCount++;
+}
+
+function showTyping() {
+  const container = document.getElementById("messages");
+  const div = document.createElement("div");
+  div.id = "typingIndicator";
+  div.className = "message assistant";
+  div.innerHTML = '<div class="bot-avatar">✈️</div><div class="bubble"><div class="typing"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div>';
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function hideTyping() {
+  document.getElementById("typingIndicator")?.remove();
+}
+
+async function sendMessage(overrideText) {
+  const input = document.getElementById("userInput");
+  const text = overrideText || input.value.trim();
+  if (!text || isTyping) return;
+
+  input.value = "";
+  updateSend();
+  renderMessage("user", text);
+
+  if (messageCount > 2) {
+    document.getElementById("quickQuestions").style.display = "none";
+  }
+
+  isTyping = true;
+  showTyping();
+
+  const reply = await getResponse(text);
+
+  hideTyping();
+  renderMessage("assistant", reply);
+  isTyping = false;
+  input.focus();
+}
+
+function sendQuick(btn) {
+  sendMessage(btn.textContent);
+}
+
+function handleKey(e) {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+}
+
+function updateSend() {
+  const btn = document.getElementById("sendBtn");
+  const val = document.getElementById("userInput").value.trim();
+  btn.className = val && !isTyping ? "send-btn active" : "send-btn";
+}
+
+// ── Init ──
+renderMessage("assistant", "Welcome to the **American Aerospace Technical Academy (AATA)** Enrollment Assistant! ✈️\n\nI'm here to help you learn about our NDT training programs and guide you through enrollment.\n\nWhat would you like to know? You can type a question or tap one of the quick options below!");
+</script>
+</body>
+</html>
