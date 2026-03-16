@@ -488,18 +488,15 @@ function renderEnrollmentFlow() {
     <div class="sf-flow-wrapper">
       <div class="sf-flow-container" id="enrollmentFlowContainer">
         <div class="sf-flow-header">📋 Step 1: Enrollment & Apprentice Agreement</div>
-        <div class="sf-flow-loading" id="flowLoading">
-          <div class="spinner"></div><br>
-          Loading enrollment form...
+        <div style="padding:20px;text-align:center;">
+          <p style="color:#1e293b;font-size:14px;line-height:1.6;margin-bottom:16px;">
+            Click the button below to open the enrollment form. It will open in a new tab.<br>
+            Fill out all the fields and submit the form, then come back here to continue.
+          </p>
+          <a href="${flowUrl}" target="_blank" style="display:inline-block;padding:12px 28px;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;border-radius:10px;font-size:15px;font-weight:700;text-decoration:none;box-shadow:0 4px 12px rgba(37,99,235,0.3);transition:all 0.2s;">
+            Open Enrollment Form →
+          </a>
         </div>
-        <iframe
-          class="sf-flow-iframe"
-          id="enrollmentFlowIframe"
-          src="${flowUrl}"
-          onload="document.getElementById('flowLoading').style.display='none';"
-          style="display:none;"
-          allow="camera; microphone"
-        ></iframe>
         <div class="sf-flow-note">
           This form creates your student profile and captures the DAS Apprentice Agreement.<br>
           Your information is securely stored in AATA's Salesforce system.
@@ -512,12 +509,6 @@ function renderEnrollmentFlow() {
   `;
   container.appendChild(wrapper);
   container.scrollTop = container.scrollHeight;
-
-  const iframe = document.getElementById("enrollmentFlowIframe");
-  iframe.addEventListener("load", function() {
-    iframe.style.display = "block";
-    container.scrollTop = container.scrollHeight;
-  });
 }
 
 function handleFlowCompleted() {
