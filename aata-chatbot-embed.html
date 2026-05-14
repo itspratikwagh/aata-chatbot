@@ -465,29 +465,49 @@ IMPORTANT: Spots are limited. Always mention how many spots are left to create u
 - Must be 18+
 
 ## AUTOMATED ENROLLMENT PROCESS
-CRITICAL: When a student says they want to enroll or sign up, guide them through the enrollment form (Step 1). The remaining steps are AUTOMATED — after Step 1, the system handles everything via email.
+The enrollment is fully automated. The student does NOT fill any external form. Instead, you collect a few basic details conversationally, then submit them to Salesforce via a special marker — everything else happens automatically via email after that.
 
-IMPORTANT WARNING TO SHARE WITH STUDENTS:
-Due to high demand, students will NOT be considered enrolled unless ALL steps are completed. All steps must be completed for enrollment to be confirmed.
+### Step 1 — Conversational data collection (the ONLY manual step)
 
-### Step 1: Complete the Enrollment Form (ONLY step the student does in the chatbot)
-- When the student is ready, include the EXACT text [SHOW_ENROLLMENT_FLOW] in your response (this triggers the Salesforce enrollment form to appear inline in the chat)
-- IMPORTANT: You MUST include the literal text [SHOW_ENROLLMENT_FLOW] (with brackets) in your message. Do not describe the form fields or link to an external page.
-- Before showing the form, confirm which class they prefer — use the LIVE CLASS AVAILABILITY data from the bottom of this prompt for current class names, dates, and spots remaining
-- The form collects personal info and class selection
-- It creates a Contact record AND automatically enrolls them in the selected class
-- After submission, the system automatically sends the DAS 1 Apprenticeship Agreement to their email via Box Sign for e-signature
+You will collect these fields, ONE AT A TIME, conversationally. Validate as you go:
 
-### After Step 1 — Everything is Automated:
-- The DAS 1 form (required by the State of California Division of Apprenticeship Standards) arrives in their email via Box Sign. Some fields will be pre-filled; they need to complete the remaining fields (SSN, military info, education, etc.) and sign it.
-- Once they sign the DAS form, TWO emails are automatically sent:
-  1. **Foothill College Enrollment** — Instructions to apply at Foothill College (required for ALL students, Foothill administers the apprenticeship program). They should select "CEA Nondestructive Testing" as their program of study.
-  2. **Book Fee Payment** — $325 for ASNT books. Payment via Zelle/Apple Cash (424-385-1149), Cash App ($WaghNDT), PayPal (paypal.me/ppwagh), or credit card (contact Pratik at 424-385-1149).
+1. **First name**
+2. **Last name**
+3. **Email** (must contain @)
+4. **Mobile phone** (US, with area code)
+5. **Mailing street address** (street + apt/unit)
+6. **City**
+7. **State** (2-letter code)
+8. **Zip code** (5 digits)
+9. **Class preference** — must be one of: `Day Class` or `Night Class` (refer to LIVE CLASS AVAILABILITY section below)
 
-### What to Tell Students After Step 1:
-- "Check your email for the DAS 1 Apprenticeship Agreement from Box Sign. Review and sign it."
-- "After you sign it, you'll automatically receive two more emails with instructions for Foothill College enrollment and book fee payment."
-- "Once all steps are complete, you'll be fully enrolled!"
+Rules for collection:
+- Ask for ONE field at a time. Wait for the user's reply before asking the next.
+- If they give multiple fields in one message, accept them and ask for the next missing one.
+- If a value looks invalid (no @ in email, fewer than 10 digits in phone), politely ask them to confirm.
+- Do not ask for SSN, military, education, or ethnicity here — those go on the DAS 1 e-signature form they receive by email.
+
+Once ALL 9 fields are collected, summarize them back ("Let me confirm: First name X, last name Y, ..."), then ask "Does that all look right?"
+
+When they confirm, emit a single message containing ONLY the following marker as the LAST line of your response (after a friendly "Submitting your enrollment now..." sentence):
+
+`[CREATE_ENROLLMENT]{"firstName":"...","lastName":"...","email":"...","mobilePhone":"...","mailingStreet":"...","mailingCity":"...","mailingState":"...","mailingPostalCode":"...","classSelection":"Day Class"}`
+
+CRITICAL FORMAT RULES for the marker:
+- Use exact key names shown above. Use `Day Class` or `Night Class` for classSelection (no dates).
+- Wrap the JSON on a SINGLE line. Use double quotes only. Escape any double quotes in user data.
+- Put NOTHING after the marker — it must be the last thing in your message.
+- Do NOT explain the marker to the user.
+
+### After the marker — everything is automated:
+- The DAS 1 form (required by the State of California Division of Apprenticeship Standards) arrives in their email via Box Sign. Some fields are pre-filled; they complete the remaining ones (SSN, military info, education) and sign.
+- Once they sign, TWO emails are sent automatically:
+  1. **Foothill College Enrollment** — apply for "CEA Nondestructive Testing" (required for ALL students)
+  2. **Book Fee Payment** — $325 for ASNT books
+
+### What to tell students after the marker:
+- The frontend will show a green confirmation card with the class info.
+- Then say: "Watch your email for the DAS 1 Apprenticeship Agreement from Box Sign — usually arrives in 1-2 minutes. After you sign, two more emails will follow with the Foothill College and payment instructions."
 
 ### Returning Students (Status Check):
 - If the system provides a [SYSTEM: Returning student...] message, use the enrollment status to guide them:
@@ -500,12 +520,11 @@ Due to high demand, students will NOT be considered enrolled unless ALL steps ar
 When a student says they want to enroll or are ready to sign up:
 1. First, ask: "Which state do you currently reside in?"
 2. Based on their answer:
-   - California resident → Explain tuition is FREE, then proceed with enrollment
+   - California resident → Explain tuition is FREE, then begin the conversational data collection (Step 1 above)
    - Texas resident → Direct them to contact Patrick Kratochvil at (281) 676-0356 or patrickaata@gmail.com for enrollment
    - Out-of-state resident → Explain that funding is handled case by case, and direct them to leave a message at https://www.aatatraining.org/apply
-3. For CA residents: Ask which class they prefer (Day or Night) - mention spots remaining
-4. Show the enrollment form with [SHOW_ENROLLMENT_FLOW]
-5. After they submit, tell them about the automated next steps (DAS form via email → Foothill + Payment emails)
+3. For CA residents: collect the 9 fields one by one, confirm, then emit the [CREATE_ENROLLMENT] marker
+4. After the marker is emitted, set expectations about the auto-emails and that's it — no more chatbot steps
 
 IMPORTANT RULES ABOUT VETERANS:
 - Do NOT ask if someone is a veteran as a qualifying question
@@ -845,18 +864,133 @@ function renderMessage(role, text) {
   // Process special form markers
   let remaining = text;
 
-  // Handle Salesforce Flow marker
-  if (remaining.includes("[SHOW_ENROLLMENT_FLOW]")) {
-    const parts = remaining.split("[SHOW_ENROLLMENT_FLOW]");
-    if (parts[0].trim()) renderMessageBubble(role, parts[0].trim());
-    renderEnrollmentFlow();
-    remaining = parts[1] || "";
+  // Handle [CREATE_ENROLLMENT]{...json...} marker — Claude has finished collecting
+  // basic info and asks us to POST to /api/create-enrollment.
+  const createMatch = remaining.match(/\[CREATE_ENROLLMENT\]\s*(\{[\s\S]*?\})\s*$/);
+  if (createMatch) {
+    const before = remaining.slice(0, createMatch.index).trim();
+    if (before) renderMessageBubble(role, before);
+    let payload;
+    try {
+      payload = JSON.parse(createMatch[1]);
+    } catch (e) {
+      renderMessageBubble(role, "⚠️ I had trouble formatting your enrollment data. Please try again, or contact info@aatatraining.org.");
+      console.error("CREATE_ENROLLMENT JSON parse failed:", e, createMatch[1]);
+      return;
+    }
+    submitEnrollment(payload);
+    return;
   }
 
   // Render any remaining text
   if (remaining.trim()) {
     renderMessageBubble(role, remaining.trim());
   }
+}
+
+// Show a "submitting…" card, POST to Railway, then show success or error
+async function submitEnrollment(payload) {
+  const container = document.getElementById("messages");
+  const wrapper = document.createElement("div");
+  wrapper.className = "message assistant";
+  wrapper.innerHTML = `
+    <div class="bot-avatar">✈️</div>
+    <div class="bubble" id="enrollmentSubmittingCard">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div class="typing-dot" style="background:#2563eb;width:8px;height:8px;animation:none;"></div>
+        <strong>Submitting your enrollment to Salesforce…</strong>
+      </div>
+    </div>`;
+  container.appendChild(wrapper);
+  container.scrollTop = container.scrollHeight;
+
+  try {
+    const ENDPOINT = (config.proxyUrl || "").replace(/\/api\/chat$/, "") + "/api/create-enrollment";
+    const res = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    const card = document.getElementById("enrollmentSubmittingCard");
+    if (!res.ok || !data.ok) {
+      card.innerHTML = `<strong>⚠️ Couldn't create your enrollment</strong><br><br>${data.error || "Unknown error"}<br><br>Please try again, or email <a href="mailto:info@aatatraining.org">info@aatatraining.org</a>.`;
+      card.style.background = "#fef9c3";
+      card.style.border = "2px solid #f59e0b";
+      // Tell Claude what happened so it can recover
+      conversationHistory.push({
+        role: "user",
+        content: `[SYSTEM: Enrollment submission failed: ${data.error || "unknown error"}. Apologize and offer to either retry or escalate to info@aatatraining.org.]`,
+      });
+    } else {
+      card.innerHTML = `
+        <div style="background:#f0fdf4;border:2px solid #22c55e;border-radius:12px;padding:14px;">
+          <strong style="color:#065f46;font-size:15px;">✅ Enrollment submitted!</strong><br>
+          <div style="margin-top:8px;color:#475569;font-size:13px;line-height:1.6;">
+            <strong>Class:</strong> ${data.className || payload.classSelection}<br>
+            <strong>Start date:</strong> ${data.classStartDate || "TBA"}<br><br>
+            ${data.message || "DAS 1 e-signature email will arrive within 1-2 minutes."}
+          </div>
+        </div>`;
+      conversationHistory.push({
+        role: "user",
+        content: `[SYSTEM: Enrollment created successfully in Salesforce (Contact ${data.contactId}, Class "${data.className}"). The DAS 1 Apprenticeship Agreement will arrive in their email within 1-2 minutes via Box Sign. After they sign it, two emails will follow automatically: Foothill College enrollment + book fee payment. Tell the student to watch their inbox and reassure them no more chatbot steps are needed.]`,
+      });
+    }
+    // Auto-continue conversation so Claude responds to the system message
+    setTimeout(async () => {
+      isTyping = true;
+      showTyping();
+      try {
+        const replyText = await callClaudeAPIRaw();
+        hideTyping();
+        renderMessage("assistant", replyText);
+        conversationHistory.push({ role: "assistant", content: replyText });
+      } catch (e) {
+        hideTyping();
+      }
+      isTyping = false;
+    }, 600);
+    container.scrollTop = container.scrollHeight;
+  } catch (err) {
+    const card = document.getElementById("enrollmentSubmittingCard");
+    card.innerHTML = `<strong>⚠️ Network error</strong><br><br>${err.message}. Please retry or email <a href="mailto:info@aatatraining.org">info@aatatraining.org</a>.`;
+    card.style.background = "#fef9c3";
+    card.style.border = "2px solid #f59e0b";
+    console.error(err);
+  }
+}
+
+// Helper: call Claude with the current history without appending a new user message
+async function callClaudeAPIRaw() {
+  if (config.mode === "proxy") {
+    const r = await fetch(config.proxyUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: conversationHistory }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    return j.content?.[0]?.text || "";
+  }
+  // direct mode
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": config.apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1024,
+      messages: conversationHistory,
+    }),
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const j = await r.json();
+  return j.content?.[0]?.text || "";
 }
 
 function renderMessageBubble(role, text) {
