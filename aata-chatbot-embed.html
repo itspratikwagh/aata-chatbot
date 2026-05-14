@@ -864,6 +864,23 @@ function renderMessage(role, text) {
   // Process special form markers
   let remaining = text;
 
+  // Handle [RESEND_EMAILS]{"email":"..."} marker — chatbot wants us to re-trigger
+  // the Foothill + Payment emails for a student who signed but didn't receive them.
+  const resendMatch = remaining.match(/\[RESEND_EMAILS\]\s*(\{[\s\S]*?\})\s*$/);
+  if (resendMatch) {
+    const before = remaining.slice(0, resendMatch.index).trim();
+    if (before) renderMessageBubble(role, before);
+    let payload;
+    try { payload = JSON.parse(resendMatch[1]); }
+    catch (e) {
+      renderMessageBubble(role, "⚠️ I couldn't read your email correctly. Can you type it again?");
+      console.error("RESEND_EMAILS JSON parse failed:", e, resendMatch[1]);
+      return;
+    }
+    resendEnrollmentEmails(payload.email);
+    return;
+  }
+
   // Handle [CREATE_ENROLLMENT]{...json...} marker — Claude has finished collecting
   // basic info and asks us to POST to /api/create-enrollment.
   const createMatch = remaining.match(/\[CREATE_ENROLLMENT\]\s*(\{[\s\S]*?\})\s*$/);
@@ -889,6 +906,68 @@ function renderMessage(role, text) {
 }
 
 // Show a "submitting…" card, POST to Railway, then show success or error
+async function resendEnrollmentEmails(email) {
+  const container = document.getElementById("messages");
+  const wrapper = document.createElement("div");
+  wrapper.className = "message assistant";
+  wrapper.innerHTML = `
+    <div class="bot-avatar">✈️</div>
+    <div class="bubble" id="resendCard">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div class="typing-dot" style="background:#2563eb;width:8px;height:8px;animation:none;"></div>
+        <strong>Re-sending your Foothill + payment emails…</strong>
+      </div>
+    </div>`;
+  container.appendChild(wrapper);
+  container.scrollTop = container.scrollHeight;
+
+  try {
+    const ENDPOINT = (config.proxyUrl || "").replace(/\/api\/chat$/, "") + "/api/resend-enrollment-emails";
+    const res = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    const data = await res.json();
+    const card = document.getElementById("resendCard");
+    if (!res.ok || !data.ok) {
+      card.innerHTML = `<strong>⚠️ Couldn't re-send</strong><br><br>${data.error || "Unknown error"}`;
+      card.style.background = "#fef9c3";
+      card.style.border = "2px solid #f59e0b";
+      conversationHistory.push({
+        role: "user",
+        content: `[SYSTEM: Resend result — failed: ${data.error || "unknown error"}. Apologize and offer info@aatatraining.org as fallback.]`,
+      });
+    } else {
+      card.innerHTML = `<div style="background:#f0fdf4;border:2px solid #22c55e;border-radius:12px;padding:14px;">
+        <strong style="color:#065f46;font-size:15px;">✅ Emails re-sent</strong><br>
+        <div style="margin-top:6px;color:#475569;font-size:13px;line-height:1.6;">
+          We just re-sent the Foothill enrollment + book fee payment emails to <strong>${email}</strong>. They should arrive within 30 seconds. Don't forget to check your spam folder.
+        </div>
+      </div>`;
+      conversationHistory.push({
+        role: "user",
+        content: `[SYSTEM: Resend result — success. Both emails re-sent to ${email}. Tell the student to check inbox + spam in next 30 seconds.]`,
+      });
+    }
+    setTimeout(async () => {
+      isTyping = true; showTyping();
+      try {
+        const replyText = await callClaudeAPIRaw();
+        hideTyping();
+        renderMessage("assistant", replyText);
+        conversationHistory.push({ role: "assistant", content: replyText });
+      } catch (e) { hideTyping(); }
+      isTyping = false;
+    }, 600);
+  } catch (err) {
+    const card = document.getElementById("resendCard");
+    card.innerHTML = `<strong>⚠️ Network error</strong><br><br>${err.message}`;
+    card.style.background = "#fef9c3";
+    card.style.border = "2px solid #f59e0b";
+  }
+}
+
 async function submitEnrollment(payload) {
   const container = document.getElementById("messages");
   const wrapper = document.createElement("div");
