@@ -969,6 +969,10 @@ async function resendEnrollmentEmails(email) {
 }
 
 async function submitEnrollment(payload) {
+  // Remember the email locally so the post-DAS-signature redirect can
+  // pick up where we left off (the chatbot needs to know who's returning).
+  try { localStorage.setItem("aata_pending_email", payload.email || ""); } catch (e) {}
+
   const container = document.getElementById("messages");
   const wrapper = document.createElement("div");
   wrapper.className = "message assistant";
@@ -1157,13 +1161,36 @@ loadAvailableClasses(); // Fetch live class data from Salesforce
 // Detect ?das=signed / ?das=declined redirect from Box Sign post-signature flow
 const dasParam = new URLSearchParams(window.location.search).get("das");
 if (dasParam === "signed") {
-  renderMessage("assistant",
-    "🎉 **Thanks for signing your DAS 1 Apprenticeship Agreement!**\n\n" +
-    "We've received it. Within the next minute or two, you'll get **two more emails from AATA**:\n\n" +
-    "1. **Foothill College enrollment** instructions\n" +
-    "2. **Book fee payment** details ($325 for ASNT books)\n\n" +
-    "That's everything you need to fully enroll. Have any questions about Foothill, payment, or what's next? Ask away!"
-  );
+  // Student just signed the DAS via Box. Read the email we stored during
+  // enrollment so the bot can offer to send the next two emails on demand.
+  let savedEmail = "";
+  try { savedEmail = localStorage.getItem("aata_pending_email") || ""; } catch (e) {}
+
+  if (savedEmail) {
+    renderMessage("assistant",
+      "🎉 **Thanks for signing your DAS 1 Apprenticeship Agreement!**\n\n" +
+      "Two more steps before you're fully enrolled:\n\n" +
+      "1. **Apply to Foothill College** (we'll send you the link + a short walkthrough video)\n" +
+      "2. **Pay the $325 book fee** (we'll send you the payment options)\n\n" +
+      `Whenever you're ready, just say **"yes"** and I'll email both to **${savedEmail}** right now. (Or let me know if you'd prefer a different email.)`
+    );
+    // Prime the bot with the context so the next user message ("yes" / "ready" / etc.)
+    // triggers the [RESEND_EMAILS] marker for this email.
+    conversationHistory.push({
+      role: "user",
+      content: `[SYSTEM: Student just signed the DAS. Their email on file is "${savedEmail}". You greeted them and asked if they're ready for the Foothill + book-fee emails. When they confirm with anything affirmative ("yes", "ready", "please send", "go", "yep", etc.), emit a single message ending with the marker [RESEND_EMAILS]{"email":"${savedEmail}"} on its own line. If they ask to use a different email, capture it and use that one in the marker instead. Do not emit the marker until they confirm.]`
+    });
+  } else {
+    renderMessage("assistant",
+      "🎉 **Thanks for signing your DAS 1 Apprenticeship Agreement!**\n\n" +
+      "Two more steps before you're fully enrolled — Foothill College application and the $325 book fee. " +
+      "I can email both to you right now. **What email did you sign up with?**"
+    );
+    conversationHistory.push({
+      role: "user",
+      content: `[SYSTEM: Student just signed the DAS but we don't have their email in this browser session (likely a different device). You asked them what email they signed up with. Once they reply with a valid-looking email, confirm "Got it — sending both now to <email>" and emit a single message ending with the marker [RESEND_EMAILS]{"email":"<that email>"} on its own line.]`
+    });
+  }
 } else if (dasParam === "declined") {
   renderMessage("assistant",
     "I see you didn't sign the DAS 1 Apprenticeship Agreement just now — no problem.\n\n" +
