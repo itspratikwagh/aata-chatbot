@@ -3,25 +3,30 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>AATA Enrollment Assistant</title>
+<title>AATA Enrollment Assistant v2</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-    background: transparent;
+    background: #f0f4f8;
     height: 100vh;
     display: flex;
-    align-items: stretch;
+    align-items: center;
     justify-content: center;
   }
 
   .chat-container {
     width: 100%;
-    height: 100vh;
+    max-width: 800px;
+    height: 95vh;
+    max-height: 900px;
     display: flex;
     flex-direction: column;
+    border-radius: 20px;
     overflow: hidden;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.15);
+    border: 1px solid #e2e8f0;
     background: #fff;
   }
 
@@ -231,6 +236,7 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  /* ── Flow completed button ── */
   .flow-done-btn {
     display: block;
     margin: 10px auto;
@@ -245,6 +251,79 @@
     transition: background 0.2s;
   }
   .flow-done-btn:hover { background: #16a34a; }
+
+  /* ── Email capture for status check ── */
+  .email-capture {
+    max-width: 92%;
+    animation: fadeIn 0.3s ease;
+  }
+  .email-capture-box {
+    background: #f0f9ff;
+    border: 2px solid #0ea5e9;
+    border-radius: 12px;
+    padding: 16px;
+    margin-top: 4px;
+  }
+  .email-capture-box p {
+    font-size: 13px;
+    color: #334155;
+    margin-bottom: 10px;
+    line-height: 1.4;
+  }
+  .email-capture-box .email-input-row {
+    display: flex;
+    gap: 8px;
+  }
+  .email-capture-box input[type="email"] {
+    flex: 1;
+    padding: 8px 14px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    font-size: 13px;
+    outline: none;
+  }
+  .email-capture-box input[type="email"]:focus {
+    border-color: #2563eb;
+  }
+  .email-capture-box button {
+    padding: 8px 18px;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .email-capture-box button:hover { background: #1d4ed8; }
+
+  /* ── Status result card ── */
+  .status-card {
+    max-width: 92%;
+    animation: fadeIn 0.3s ease;
+  }
+  .status-card-inner {
+    background: #f0fdf4;
+    border: 2px solid #22c55e;
+    border-radius: 12px;
+    padding: 16px;
+    margin-top: 4px;
+  }
+  .status-card-inner.not-found {
+    background: #fef9c3;
+    border-color: #f59e0b;
+  }
+  .status-card-inner h3 {
+    font-size: 14px;
+    font-weight: 700;
+    color: #065f46;
+    margin-bottom: 6px;
+  }
+  .status-card-inner p {
+    font-size: 13px;
+    color: #334155;
+    line-height: 1.5;
+  }
 </style>
 </head>
 <body>
@@ -268,6 +347,7 @@
     <button class="quick-btn" onclick="sendQuick(this)">What programs do you offer?</button>
     <button class="quick-btn" onclick="sendQuick(this)">What careers can I get after?</button>
     <button class="quick-btn" onclick="sendQuick(this)">Talk to someone</button>
+    <button class="quick-btn" onclick="checkEnrollmentStatus()">Check my enrollment status</button>
   </div>
 
   <div class="input-area">
@@ -283,12 +363,48 @@
 // ============================================================
 let config = {
   mode: "proxy",
+  apiKey: "",
   proxyUrl: "https://aata-proxy-production.up.railway.app/api/chat",
   salesforceFlowUrl: "https://americanaerospacetechnicalacademy.my.site.com/enroll",
 };
 let conversationHistory = [];
 let isTyping = false;
 let messageCount = 0;
+let availableClasses = []; // Fetched live from Salesforce
+
+// ============================================================
+// FETCH AVAILABLE CLASSES FROM SALESFORCE (on page load)
+// ============================================================
+async function loadAvailableClasses() {
+  try {
+    const res = await fetch("https://aata-proxy-production.up.railway.app/api/available-classes");
+    const data = await res.json();
+    availableClasses = data.classes || [];
+    console.log("📚 Loaded " + availableClasses.length + " available classes from Salesforce");
+
+    // Inject class info into the system prompt so Claude has live data
+    if (availableClasses.length > 0) {
+      let classInfo = "\n\n## LIVE CLASS AVAILABILITY (from Salesforce - do NOT use hardcoded class info, use this instead):\n";
+      availableClasses.forEach((c, i) => {
+        const start = new Date(c.startDate + "T00:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+        const end = new Date(c.endDate + "T00:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+        const isDay = c.name.toLowerCase().includes("day");
+        const schedule = isDay ? "8 AM to 4 PM PST, Monday through Friday" : "5 PM to 10 PM PST, Monday through Friday";
+        classInfo += `\n### ${c.name}\n`;
+        classInfo += `- Schedule: ${schedule}\n`;
+        classInfo += `- Dates: ${start} to ${end}\n`;
+        classInfo += `- Spots remaining: ${c.spotsRemaining} of ${c.totalSpots}\n`;
+        classInfo += `- Class ID: ${c.id}\n`;
+      });
+      classInfo += "\nIMPORTANT: Always use these live numbers for spots remaining. If spots are 0, tell the student the class is full.\n";
+
+      // Append to the system prompt
+      SYSTEM_PROMPT += classInfo;
+    }
+  } catch (err) {
+    console.error("⚠️ Could not load available classes:", err.message);
+  }
+}
 
 const SYSTEM_PROMPT = `You are the official Enrollment Assistant for the American Aerospace Technical Academy (AATA). You help prospective students learn about AATA's programs and guide them step-by-step through the enrollment process. Be warm, encouraging, and professional. Keep responses concise but thorough.
 
@@ -322,17 +438,9 @@ const SYSTEM_PROMPT = `You are the official Enrollment Assistant for the America
 - Eligible to receive 26 college credits toward a future Associate's or Bachelor's degree at Foothill College
 
 ## UPCOMING CLASSES
-There are two class options available:
+Class availability is loaded LIVE from Salesforce at the bottom of this prompt. Do NOT use hardcoded dates or spots — always refer to the "LIVE CLASS AVAILABILITY" section appended below for current class names, dates, and remaining spots.
 
-### Night Class (15 spots left)
-- Schedule: 5 PM to 10 PM PST, Monday through Friday
-- Dates: April 27, 2026 – August 28, 2026 (16 weeks)
-
-### Day Class (10 spots left)
-- Schedule: 8 AM to 4 PM PST, Monday through Friday
-- Dates: April 20, 2026 – June 26, 2026 (10 weeks)
-
-IMPORTANT: Spots are limited. Always mention how many spots are left to create urgency. If a student is interested, encourage them to start the enrollment steps immediately.
+IMPORTANT: Spots are limited. Always mention how many spots are left to create urgency. If a student is interested, encourage them to start the enrollment steps immediately. If spots remaining is 0, tell the student that class is full.
 
 ## TUITION & COSTS
 - California Residents: Tuition is FREE. The $7,495 course fee is fully waived.
@@ -356,60 +464,48 @@ IMPORTANT: Spots are limited. Always mention how many spots are left to create u
 - No prior NDT experience required
 - Must be 18+
 
-## GUIDED ENROLLMENT PROCESS (3 STEPS)
-CRITICAL: When a student says they want to enroll or sign up, you MUST walk them through these 3 steps one at a time. Ask them which step they're on, or start from Step 1. Track their progress and guide them to the next step after each one.
+## AUTOMATED ENROLLMENT PROCESS
+CRITICAL: When a student says they want to enroll or sign up, guide them through the enrollment form (Step 1). The remaining steps are AUTOMATED — after Step 1, the system handles everything via email.
 
 IMPORTANT WARNING TO SHARE WITH STUDENTS:
-Due to high demand, students will NOT be considered enrolled unless ALL 3 steps are completed. Indicating interest but not completing all steps will result in losing the spot. All 3 steps must be completed for enrollment to be confirmed.
+Due to high demand, students will NOT be considered enrolled unless ALL steps are completed. All steps must be completed for enrollment to be confirmed.
 
-### Step 1: Complete the Enrollment & Apprentice Agreement Form
-- This single form captures the student's registration info AND the DAS 1 Apprentice Agreement — all in one step.
-- When the student is ready for Step 1, include the EXACT text [SHOW_ENROLLMENT_FLOW] in your response (this triggers the Salesforce enrollment form to appear inline in the chat)
-- IMPORTANT: You MUST include the literal text [SHOW_ENROLLMENT_FLOW] (with brackets) in your message when it's time for the student to fill out the form. Do not describe the form fields or link to an external page — just include the marker and the form will appear automatically.
-- Before showing the form, confirm which class they prefer:
-  * Night Class (5 PM – 10 PM PST, Apr 27 – Aug 28, 2026) - 15 spots left
-  * Day Class (8 AM – 4 PM PST, Apr 20 – Jun 26, 2026) - 10 spots left
-- The form collects: Personal info, class selection, AND the DAS Apprentice Agreement fields
-- Let the student know that their SSN is required on the DAS portion — it is a State of California government form (Division of Apprenticeship Standards)
-- The form creates a Contact record directly in Salesforce with all their information
-- After they submit, the system will automatically notify you. Then move to Step 2
+### Step 1: Complete the Enrollment Form (ONLY step the student does in the chatbot)
+- When the student is ready, include the EXACT text [SHOW_ENROLLMENT_FLOW] in your response (this triggers the Salesforce enrollment form to appear inline in the chat)
+- IMPORTANT: You MUST include the literal text [SHOW_ENROLLMENT_FLOW] (with brackets) in your message. Do not describe the form fields or link to an external page.
+- Before showing the form, confirm which class they prefer — use the LIVE CLASS AVAILABILITY data from the bottom of this prompt for current class names, dates, and spots remaining
+- The form collects personal info and class selection
+- It creates a Contact record AND automatically enrolls them in the selected class
+- After submission, the system automatically sends the DAS 1 Apprenticeship Agreement to their email via Box Sign for e-signature
 
-### Step 2: Foothill College Enrollment
-- This step is REQUIRED for ALL students, even if they do not intend to use the 26 college credits. Foothill College manages the apprenticeship program for AATA, so enrollment through Foothill is mandatory to complete the program.
-- Make sure to clearly explain this to the student so they understand why this step is necessary.
-- Guide them to apply at Foothill College for the correct term based on their class start date:
-  * Spring Term: Classes starting in April, May, or June
-- Direct them to apply here: https://www.opencccapply.net/gateway/apply?cccMisCode=422
-- If they need help with the application, share this video walkthrough: https://www.youtube.com/watch?v=le3lpewBbns
-- Once they confirm they've enrolled at Foothill, move to Step 3
+### After Step 1 — Everything is Automated:
+- The DAS 1 form (required by the State of California Division of Apprenticeship Standards) arrives in their email via Box Sign. Some fields will be pre-filled; they need to complete the remaining fields (SSN, military info, education, etc.) and sign it.
+- Once they sign the DAS form, TWO emails are automatically sent:
+  1. **Foothill College Enrollment** — Instructions to apply at Foothill College (required for ALL students, Foothill administers the apprenticeship program). They should select "CEA Nondestructive Testing" as their program of study.
+  2. **Book Fee Payment** — $325 for ASNT books. Payment via Zelle/Apple Cash (424-385-1149), Cash App ($WaghNDT), PayPal (paypal.me/ppwagh), or credit card (contact Pratik at 424-385-1149).
 
-### Step 3: Book Fee Payment ($325)
-- The final step is paying the $325 book fee
-- Payment can be made in one installment OR split into two equal payments ($162.50 each)
-- Payment methods:
-  * Zelle / Apple Cash: 424-385-1149
-  * Cash App: $WaghNDT
-  * PayPal: https://paypal.me/ppwagh
-  * Credit Card: https://wise.com/pay/r/8-psp-TnrS8wMEU
-- Books are brand new hard copies shipped directly from ASNT to the student's home via FedEx
+### What to Tell Students After Step 1:
+- "Check your email for the DAS 1 Apprenticeship Agreement from Box Sign. Review and sign it."
+- "After you sign it, you'll automatically receive two more emails with instructions for Foothill College enrollment and book fee payment."
+- "Once all steps are complete, you'll be fully enrolled!"
 
-### After All 3 Steps:
-- Once the student has completed all 3 steps, instruct them to message Pratik Wagh at +1 424-385-1149 or email trainingaata@gmail.com to confirm completion
-- Emphasize: They will NOT be considered enrolled until all steps are done and confirmed
+### Returning Students (Status Check):
+- If the system provides a [SYSTEM: Returning student...] message, use the enrollment status to guide them:
+  * Step 1 Complete / DAS Sent → Tell them to check email for the DAS form
+  * DAS Signed / Emails Sent → Tell them to check email for Foothill and payment instructions
+  * Payment Received → Almost done, enrollment being finalized
+  * Fully Enrolled → Welcome them, they're all set!
 
 ## ENROLLMENT FLOW CONVERSATION STRATEGY
 When a student says they want to enroll or are ready to sign up:
 1. First, ask: "Which state do you currently reside in?"
 2. Based on their answer:
-   - California resident → Explain tuition is FREE, then proceed with the 3-step enrollment process
+   - California resident → Explain tuition is FREE, then proceed with enrollment
    - Texas resident → Direct them to contact Patrick Kratochvil at (281) 676-0356 or patrickaata@gmail.com for enrollment
    - Out-of-state resident → Explain that funding is handled case by case, and direct them to leave a message at https://www.aatatraining.org/apply
 3. For CA residents: Ask which class they prefer (Day or Night) - mention spots remaining
-4. Then walk them through the 3 steps ONE AT A TIME
-5. After explaining each step, ask "Have you completed this step?" before moving to the next
-6. Keep a running summary: "Great! You've completed Step 1. Now let's move to Step 2..."
-7. If they haven't completed a step, offer to help them with it or answer questions about it
-8. After all 3 steps, congratulate them and remind them to message Pratik to confirm
+4. Show the enrollment form with [SHOW_ENROLLMENT_FLOW]
+5. After they submit, tell them about the automated next steps (DAS form via email → Foothill + Payment emails)
 
 IMPORTANT RULES ABOUT VETERANS:
 - Do NOT ask if someone is a veteran as a qualifying question
@@ -423,7 +519,7 @@ IMPORTANT RULES ABOUT VETERANS:
 - Industries: Aerospace, aviation, oil & gas, manufacturing, construction, power generation
 
 ## CONTACT
-- General / California: trainingaata@gmail.com
+- General / California: info@aatatraining.org
 - Houston / Texas: Patrick Kratochvil at (281) 676-0356 or patrickaata@gmail.com
 - Pratik Wagh (enrollment confirmation): +1 424-385-1149
 - Apply online / Leave a message: www.aatatraining.org/apply
@@ -432,7 +528,7 @@ IMPORTANT RULES ABOUT VETERANS:
 ## CONNECTING TO A LIVE AGENT
 If a student asks to speak with a person, be connected to an agent, or wants to talk to someone:
 - Direct them to call: 323-761-9066
-- If the call doesn't go through, ask them to email: trainingaata@gmail.com
+- If the call doesn't go through, ask them to email: info@aatatraining.org
 - Do NOT provide any other phone numbers for live agent requests — only 323-761-9066
 
 ## BEHAVIOR GUIDELINES
@@ -442,8 +538,8 @@ If a student asks to speak with a person, be connected to an agent, or wants to 
 - If someone is a TX resident, warmly direct them to Patrick Kratochvil for enrollment
 - NEVER proactively mention veteran benefits or veteran-specific funding
 - Create urgency about limited spots (mention exact spots remaining for each class)
-- When a CA student wants to enroll, ALWAYS use the guided 3-step process - don't skip steps
-- Track which steps the student has completed in the conversation
+- When a CA student wants to enroll, guide them through the enrollment form, then explain the automated next steps
+- If a returning student checks their status, use the enrollment status to guide them to the right step
 - If you don't know something specific, direct them to contact AATA directly
 - Suggest next steps proactively after answering any question
 - Keep responses concise: 3-6 sentences for simple questions, more detail only when asked
@@ -463,6 +559,7 @@ function renderEnrollmentFlow() {
   const isConfigured = flowUrl && !flowUrl.includes("PASTE_YOUR");
 
   if (!isConfigured) {
+    // Placeholder if Flow URL not yet configured
     wrapper.innerHTML = `
       <div class="bot-avatar">✈️</div>
       <div class="sf-flow-wrapper">
@@ -471,7 +568,7 @@ function renderEnrollmentFlow() {
           <div style="padding:20px;text-align:center;color:#64748b;font-size:13px;line-height:1.6;">
             The Salesforce enrollment form is being set up.<br>
             Please contact us directly to enroll:<br><br>
-            <strong>Email:</strong> trainingaata@gmail.com<br>
+            <strong>Email:</strong> info@aatatraining.org<br>
             <strong>Call:</strong> 323-761-9066<br>
             <strong>Apply online:</strong> <a href="https://www.aatatraining.org/apply" target="_blank">www.aatatraining.org/apply</a>
           </div>
@@ -488,15 +585,18 @@ function renderEnrollmentFlow() {
     <div class="sf-flow-wrapper">
       <div class="sf-flow-container" id="enrollmentFlowContainer">
         <div class="sf-flow-header">📋 Step 1: Enrollment & Apprentice Agreement</div>
-        <div style="padding:20px;text-align:center;">
-          <p style="color:#1e293b;font-size:14px;line-height:1.6;margin-bottom:16px;">
-            Click the button below to open the enrollment form. It will open in a new tab.<br>
-            Fill out all the fields and submit the form, then come back here to continue.
-          </p>
-          <a href="${flowUrl}" target="_blank" style="display:inline-block;padding:12px 28px;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;border-radius:10px;font-size:15px;font-weight:700;text-decoration:none;box-shadow:0 4px 12px rgba(37,99,235,0.3);transition:all 0.2s;">
-            Open Enrollment Form →
-          </a>
+        <div class="sf-flow-loading" id="flowLoading">
+          <div class="spinner"></div><br>
+          Loading enrollment form...
         </div>
+        <iframe
+          class="sf-flow-iframe"
+          id="enrollmentFlowIframe"
+          src="${flowUrl}"
+          onload="document.getElementById('flowLoading').style.display='none';"
+          style="display:none;"
+          allow="camera; microphone"
+        ></iframe>
         <div class="sf-flow-note">
           This form creates your student profile and captures the DAS Apprentice Agreement.<br>
           Your information is securely stored in AATA's Salesforce system.
@@ -509,30 +609,165 @@ function renderEnrollmentFlow() {
   `;
   container.appendChild(wrapper);
   container.scrollTop = container.scrollHeight;
+
+  // Show iframe once loaded
+  const iframe = document.getElementById("enrollmentFlowIframe");
+  iframe.addEventListener("load", function() {
+    iframe.style.display = "block";
+    container.scrollTop = container.scrollHeight;
+  });
 }
 
 function handleFlowCompleted() {
+  // Update the flow container to show success
   const flowContainer = document.getElementById("enrollmentFlowContainer");
   flowContainer.innerHTML = `
     <div style="text-align:center;padding:20px;color:#065f46;font-weight:600;font-size:14px;">
       ✅ Enrollment form submitted successfully!<br>
-      <span style="font-weight:400;font-size:13px;color:#475569;">Your Contact record and DAS Agreement have been saved to AATA's system.</span>
+      <span style="font-weight:400;font-size:13px;color:#475569;">Your student profile has been created and you've been enrolled in your selected class.</span>
     </div>
   `;
 
+  // Notify Claude that Step 1 is done — new automated workflow
   conversationHistory.push({
     role: "user",
-    content: "[SYSTEM: Student has successfully completed the Salesforce enrollment form (Step 1), which includes their registration info AND the DAS Apprentice Agreement. A Contact record has been created in Salesforce. Please congratulate them and guide them to Step 2 - Foothill College enrollment.]"
+    content: "[SYSTEM: Student has successfully completed the Salesforce enrollment form (Step 1). A Contact record and Class Registration have been created. The system will now automatically send the DAS 1 Apprenticeship Agreement via Box Sign to their email for e-signature. After they sign it, two emails will be sent automatically: (1) Foothill College enrollment instructions, and (2) Book fee payment information. Tell the student to check their email for the DAS 1 form to sign.]"
   });
 
+  // Auto-continue the conversation
   setTimeout(async () => {
     isTyping = true;
     showTyping();
-    const reply = await getResponse("[Student completed Step 1 — Salesforce enrollment form submitted]");
+    const reply = await getResponse("[Student completed Step 1 — enrollment form submitted, DAS form will be sent via email]");
     hideTyping();
     renderMessage("assistant", reply);
     isTyping = false;
   }, 1000);
+}
+
+// ============================================================
+// ENROLLMENT STATUS CHECK
+// ============================================================
+function checkEnrollmentStatus() {
+  // Hide quick questions
+  document.getElementById("quickQuestions").style.display = "none";
+
+  // Show email capture UI
+  const container = document.getElementById("messages");
+  const wrapper = document.createElement("div");
+  wrapper.className = "message assistant";
+  wrapper.innerHTML = `
+    <div class="bot-avatar">✈️</div>
+    <div class="email-capture">
+      <div class="email-capture-box">
+        <p><strong>Welcome back!</strong> Enter the email you used during enrollment so I can check your progress.</p>
+        <div class="email-input-row">
+          <input type="email" id="statusEmailInput" placeholder="your.email@example.com" onkeydown="if(event.key==='Enter'){event.preventDefault();submitStatusCheck();}" />
+          <button onclick="submitStatusCheck()">Check</button>
+        </div>
+      </div>
+    </div>
+  `;
+  container.appendChild(wrapper);
+  container.scrollTop = container.scrollHeight;
+  document.getElementById("statusEmailInput").focus();
+}
+
+async function submitStatusCheck() {
+  const input = document.getElementById("statusEmailInput");
+  const email = input?.value?.trim();
+  if (!email) return;
+
+  // Disable input
+  input.disabled = true;
+  input.parentElement.querySelector("button").disabled = true;
+
+  // Show typing
+  showTyping();
+
+  try {
+    const res = await fetch(`https://aata-proxy-production.up.railway.app/api/enrollment-status?email=${encodeURIComponent(email)}`);
+    const data = await res.json();
+    hideTyping();
+
+    const container = document.getElementById("messages");
+
+    if (data.found && data.enrollmentStatus) {
+      // Show status card
+      const statusMessages = {
+        "Step 1 Complete": "Your enrollment form is submitted! We've sent you the DAS 1 Apprenticeship Agreement via email for e-signature. Please check your inbox (and spam folder) for an email from Box Sign.",
+        "DAS Sent": "The DAS 1 form has been sent to your email for e-signature. Please check your inbox (and spam folder) for an email from Box Sign and sign the document.",
+        "DAS Signed": "Your DAS form is signed! We've sent you two emails — one with Foothill College enrollment instructions and one about the book fee payment. Check your inbox!",
+        "Emails Sent": "We've sent you two important emails: (1) Foothill College application instructions, and (2) Book fee payment details ($325). Please check your inbox and complete both steps.",
+        "Payment Received": "Payment received! Your enrollment is almost complete.",
+        "Fully Enrolled": "You're fully enrolled! Welcome to AATA! 🎉 Your class details have been confirmed."
+      };
+
+      const statusMsg = statusMessages[data.enrollmentStatus] || `Current status: ${data.enrollmentStatus}`;
+
+      const card = document.createElement("div");
+      card.className = "message assistant";
+      card.innerHTML = `
+        <div class="bot-avatar">✈️</div>
+        <div class="status-card">
+          <div class="status-card-inner">
+            <h3>Welcome back, ${data.firstName}!</h3>
+            <p><strong>Enrollment Status:</strong> ${data.enrollmentStatus}</p>
+            <p>${statusMsg}</p>
+            ${data.classSelection ? `<p><strong>Class:</strong> ${data.classSelection}</p>` : ""}
+          </div>
+        </div>
+      `;
+      container.appendChild(card);
+
+      // Inject context into conversation for Claude
+      conversationHistory.push({
+        role: "user",
+        content: `[SYSTEM: Returning student identified. Name: ${data.firstName} ${data.lastName}, Email: ${data.email}, Enrollment Status: ${data.enrollmentStatus}, Class: ${data.classSelection || "unknown"}. Guide them based on their current status.]`
+      });
+
+      // Get Claude's personalized follow-up
+      setTimeout(async () => {
+        isTyping = true;
+        showTyping();
+        const reply = await getResponse(`[Returning student ${data.firstName} checked status: ${data.enrollmentStatus}]`);
+        hideTyping();
+        renderMessage("assistant", reply);
+        isTyping = false;
+      }, 500);
+
+    } else {
+      // Not found
+      const card = document.createElement("div");
+      card.className = "message assistant";
+      card.innerHTML = `
+        <div class="bot-avatar">✈️</div>
+        <div class="status-card">
+          <div class="status-card-inner not-found">
+            <h3>No enrollment found</h3>
+            <p>We couldn't find an enrollment record for <strong>${email}</strong>. This could mean you haven't started the enrollment process yet, or you used a different email.</p>
+          </div>
+        </div>
+      `;
+      container.appendChild(card);
+
+      // Let Claude guide them to start fresh
+      setTimeout(async () => {
+        isTyping = true;
+        showTyping();
+        const reply = await getResponse("I checked my enrollment status but nothing was found. I may be a new student.");
+        hideTyping();
+        renderMessage("assistant", reply);
+        isTyping = false;
+      }, 500);
+    }
+  } catch (err) {
+    hideTyping();
+    renderMessage("assistant", "⚠️ Sorry, I couldn't check your enrollment status right now. Please try again or contact us at info@aatatraining.org.");
+  }
+
+  const container = document.getElementById("messages");
+  container.scrollTop = container.scrollHeight;
 }
 
 // ============================================================
@@ -594,7 +829,7 @@ async function getResponse(userMessage) {
     return await callClaudeAPI(userMessage);
   } catch (err) {
     console.error("API error:", err);
-    return `⚠️ I had trouble connecting to the AI service (${err.message}). Please try again or contact us directly at trainingaata@gmail.com or 323-761-9066.`;
+    return `⚠️ I had trouble connecting to the AI service (${err.message}). Please try again or contact us directly at info@aatatraining.org or 323-761-9066.`;
   }
 }
 
@@ -607,8 +842,10 @@ function renderMessage(role, text) {
     return;
   }
 
+  // Process special form markers
   let remaining = text;
 
+  // Handle Salesforce Flow marker
   if (remaining.includes("[SHOW_ENROLLMENT_FLOW]")) {
     const parts = remaining.split("[SHOW_ENROLLMENT_FLOW]");
     if (parts[0].trim()) renderMessageBubble(role, parts[0].trim());
@@ -616,6 +853,7 @@ function renderMessage(role, text) {
     remaining = parts[1] || "";
   }
 
+  // Render any remaining text
   if (remaining.trim()) {
     renderMessageBubble(role, remaining.trim());
   }
@@ -631,6 +869,7 @@ function renderMessageBubble(role, text) {
     html += '<div class="bot-avatar">✈️</div>';
   }
 
+  // Markdown: headers, bold, links, bullets, line breaks
   let formatted = text
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/^#{1,4}\s+(.+)$/gm, "<strong>$1</strong>")
@@ -700,6 +939,7 @@ function updateSend() {
 }
 
 // ── Init ──
+loadAvailableClasses(); // Fetch live class data from Salesforce
 renderMessage("assistant", "Welcome to the **American Aerospace Technical Academy (AATA)** Enrollment Assistant! ✈️\n\nI'm here to help you learn about our NDT training programs and guide you through enrollment.\n\nWhat would you like to know? You can type a question or tap one of the quick options below!");
 </script>
 </body>
