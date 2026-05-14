@@ -1074,7 +1074,26 @@ function updateSend() {
 
 // ── Init ──
 loadAvailableClasses(); // Fetch live class data from Salesforce
-renderMessage("assistant", "Welcome to the **American Aerospace Technical Academy (AATA)** Enrollment Assistant! ✈️\n\nI'm here to help you learn about our NDT training programs and guide you through enrollment.\n\nWhat would you like to know? You can type a question or tap one of the quick options below!");
+
+// Detect ?das=signed / ?das=declined redirect from Box Sign post-signature flow
+const dasParam = new URLSearchParams(window.location.search).get("das");
+if (dasParam === "signed") {
+  renderMessage("assistant",
+    "🎉 **Thanks for signing your DAS 1 Apprenticeship Agreement!**\n\n" +
+    "We've received it. Within the next minute or two, you'll get **two more emails from AATA**:\n\n" +
+    "1. **Foothill College enrollment** instructions\n" +
+    "2. **Book fee payment** details ($325 for ASNT books)\n\n" +
+    "That's everything you need to fully enroll. Have any questions about Foothill, payment, or what's next? Ask away!"
+  );
+} else if (dasParam === "declined") {
+  renderMessage("assistant",
+    "I see you didn't sign the DAS 1 Apprenticeship Agreement just now — no problem.\n\n" +
+    "The DAS form is required by the State of California to complete enrollment. " +
+    "Want to walk through it together, or do you have questions about what's on it? I'm happy to help."
+  );
+} else {
+  renderMessage("assistant", "Welcome to the **American Aerospace Technical Academy (AATA)** Enrollment Assistant! ✈️\n\nI'm here to help you learn about our NDT training programs and guide you through enrollment.\n\nWhat would you like to know? You can type a question or tap one of the quick options below!");
+}
 </script>
 </body>
 </html>
