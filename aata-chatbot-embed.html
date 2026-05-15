@@ -934,10 +934,21 @@ async function resendEnrollmentEmails(email) {
       card.innerHTML = `<strong>⚠️ Couldn't re-send</strong><br><br>${data.error || "Unknown error"}`;
       card.style.background = "#fef9c3";
       card.style.border = "2px solid #f59e0b";
+      // Failure: let Claude follow up with apology + fallback info
       conversationHistory.push({
         role: "user",
-        content: `[SYSTEM: Resend result — failed: ${data.error || "unknown error"}. Apologize and offer info@aatatraining.org as fallback.]`,
+        content: `[SYSTEM: Resend result — failed: ${data.error || "unknown error"}. Apologize and offer info@aatatraining.org as fallback. Keep it to one short sentence — the user already saw an error card.]`,
       });
+      setTimeout(async () => {
+        isTyping = true; showTyping();
+        try {
+          const replyText = await callClaudeAPIRaw();
+          hideTyping();
+          renderMessage("assistant", replyText);
+          conversationHistory.push({ role: "assistant", content: replyText });
+        } catch (e) { hideTyping(); }
+        isTyping = false;
+      }, 600);
     } else {
       card.innerHTML = `<div style="background:#f0fdf4;border:2px solid #22c55e;border-radius:12px;padding:14px;">
         <strong style="color:#065f46;font-size:15px;">✅ Emails re-sent</strong><br>
@@ -945,21 +956,14 @@ async function resendEnrollmentEmails(email) {
           We just re-sent the Foothill enrollment + book fee payment emails to <strong>${email}</strong>. They should arrive within 30 seconds. Don't forget to check your spam folder.
         </div>
       </div>`;
+      // Success: green card already says everything. Skip the Claude follow-up
+      // to avoid the duplicate "Done — I just re-sent..." paragraph below it.
+      // Just record what happened so any later turn has the context.
       conversationHistory.push({
         role: "user",
-        content: `[SYSTEM: Resend result — success. Both emails re-sent to ${email}. Tell the student to check inbox + spam in next 30 seconds.]`,
+        content: `[SYSTEM_INTERNAL: Foothill + book fee resend succeeded for ${email}. The user already saw a green confirmation card, so do NOT acknowledge this in a new message — only reference it if the user asks again later.]`,
       });
     }
-    setTimeout(async () => {
-      isTyping = true; showTyping();
-      try {
-        const replyText = await callClaudeAPIRaw();
-        hideTyping();
-        renderMessage("assistant", replyText);
-        conversationHistory.push({ role: "assistant", content: replyText });
-      } catch (e) { hideTyping(); }
-      isTyping = false;
-    }, 600);
   } catch (err) {
     const card = document.getElementById("resendCard");
     card.innerHTML = `<strong>⚠️ Network error</strong><br><br>${err.message}`;
