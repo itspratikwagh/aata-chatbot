@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AATA Staff Data Assistant</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    background: #0f172a;
+    min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    color: #1e293b;
+  }
+  .chat-container {
+    width: 100%; max-width: 900px; height: 95vh; max-height: 950px;
+    display: flex; flex-direction: column;
+    border-radius: 16px; overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+    background: #fff;
+  }
+  /* Header */
+  .header {
+    background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+    padding: 16px 22px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .header-icon {
+    width: 42px; height: 42px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #2563eb, #60a5fa);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+  }
+  .header-text h1 { color: #fff; font-size: 16px; font-weight: 700; }
+  .header-text p { color: #94a3b8; font-size: 12px; margin-top: 2px; }
+  .header-badge {
+    margin-left: auto;
+    background: rgba(34, 197, 94, 0.15);
+    color: #22c55e;
+    padding: 4px 10px; border-radius: 6px;
+    font-size: 11px; font-weight: 600;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+  }
+  .header-badge.locked { background: rgba(239, 68, 68, 0.15); color: #ef4444; border-color: rgba(239, 68, 68, 0.3); }
+
+  /* PIN gate */
+  .pin-gate {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 40px 20px; text-align: center;
+    background: #f8fafc;
+  }
+  .pin-gate h2 { font-size: 20px; color: #0f172a; margin-bottom: 8px; }
+  .pin-gate p { color: #64748b; font-size: 14px; margin-bottom: 24px; max-width: 420px; }
+  .pin-form { display: flex; gap: 8px; margin-bottom: 14px; }
+  .pin-input {
+    width: 220px; padding: 12px 16px;
+    border: 2px solid #cbd5e1; border-radius: 10px;
+    font-size: 16px; outline: none; letter-spacing: 2px; text-align: center;
+  }
+  .pin-input:focus { border-color: #2563eb; }
+  .pin-btn {
+    padding: 12px 22px;
+    background: #2563eb; color: #fff;
+    border: none; border-radius: 10px;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .pin-btn:hover { background: #1d4ed8; }
+  .pin-error { color: #ef4444; font-size: 13px; min-height: 18px; }
+
+  /* Chat */
+  .messages {
+    flex: 1; overflow-y: auto;
+    padding: 18px 22px;
+    background: #f8fafc;
+  }
+  .message { display: flex; margin-bottom: 16px; animation: fadeIn 0.3s; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .message.user { justify-content: flex-end; }
+  .bot-icon {
+    width: 30px; height: 30px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #0f172a, #2563eb);
+    color: #fff; display: flex; align-items: center; justify-content: center;
+    margin-right: 10px; flex-shrink: 0; margin-top: 2px;
+    font-size: 14px;
+  }
+  .bubble {
+    max-width: 85%;
+    padding: 12px 16px;
+    font-size: 14px; line-height: 1.6;
+    word-break: break-word;
+  }
+  .message.user .bubble {
+    background: #2563eb; color: #fff;
+    border-radius: 14px 14px 4px 14px;
+  }
+  .message.assistant .bubble {
+    background: #fff; color: #1e293b;
+    border-radius: 14px 14px 14px 4px;
+    border: 1px solid #e2e8f0;
+  }
+  .bubble strong { font-weight: 700; color: #0f172a; }
+  .bubble code, .bubble pre {
+    background: #f1f5f9;
+    padding: 2px 6px; border-radius: 4px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px;
+  }
+  .bubble pre { padding: 10px; overflow-x: auto; margin: 6px 0; }
+  .bubble table {
+    border-collapse: collapse; margin: 8px 0; font-size: 13px;
+    width: 100%;
+  }
+  .bubble th, .bubble td {
+    border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left;
+  }
+  .bubble th { background: #f1f5f9; font-weight: 600; }
+  .bubble em { color: #94a3b8; font-size: 11px; }
+  .bubble ul, .bubble ol { margin: 8px 0 8px 24px; }
+  .bubble li { margin: 4px 0; }
+  .bubble a { color: #2563eb; }
+
+  /* SOQL footer in messages */
+  .soql-footer {
+    margin-top: 8px; padding-top: 8px;
+    border-top: 1px dashed #e2e8f0;
+    font-size: 11px; color: #94a3b8;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .soql-footer summary { cursor: pointer; outline: none; }
+
+  /* Quick prompts */
+  .quick-prompts {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 0 22px 8px;
+  }
+  .quick-prompt {
+    padding: 6px 12px; border-radius: 16px;
+    background: #f1f5f9; color: #475569;
+    font-size: 12px; cursor: pointer;
+    border: 1px solid #e2e8f0;
+  }
+  .quick-prompt:hover { background: #e0e7ff; border-color: #818cf8; color: #3730a3; }
+
+  /* Typing */
+  .typing { display: flex; gap: 5px; padding: 8px 0; }
+  .typing-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #94a3b8; animation: bounce 1.4s infinite;
+  }
+  .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+  .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-7px); } }
+
+  /* Input */
+  .input-area {
+    padding: 14px 22px;
+    border-top: 1px solid #e2e8f0;
+    display: flex; gap: 10px;
+    background: #fff;
+  }
+  .input-area textarea {
+    flex: 1; padding: 10px 14px;
+    border: 1px solid #cbd5e1; border-radius: 12px;
+    font-size: 14px; outline: none; resize: none;
+    font-family: inherit; min-height: 40px; max-height: 120px;
+  }
+  .input-area textarea:focus { border-color: #2563eb; }
+  .send-btn {
+    padding: 0 20px;
+    background: #2563eb; color: #fff;
+    border: none; border-radius: 12px;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .send-btn:disabled { background: #cbd5e1; cursor: default; }
+
+  .footer {
+    text-align: center; padding: 8px 0;
+    background: #f8fafc; border-top: 1px solid #e2e8f0;
+    font-size: 11px; color: #94a3b8;
+  }
+</style>
+</head>
+<body>
+<div class="chat-container">
+  <div class="header">
+    <div class="header-icon">📊</div>
+    <div class="header-text">
+      <h1>AATA Staff Data Assistant</h1>
+      <p>Read-only Salesforce queries · live data</p>
+    </div>
+    <div class="header-badge locked" id="badge">🔒 Locked</div>
+  </div>
+
+  <!-- PIN Gate -->
+  <div class="pin-gate" id="pinGate">
+    <h2>Staff access</h2>
+    <p>Enter the staff PIN to use this assistant. Ask AATA admin if you don't have it.</p>
+    <form class="pin-form" onsubmit="event.preventDefault(); checkPin();">
+      <input type="password" class="pin-input" id="pinInput" placeholder="•••••••" autocomplete="off" autofocus />
+      <button type="submit" class="pin-btn">Unlock</button>
+    </form>
+    <div class="pin-error" id="pinError"></div>
+  </div>
+
+  <!-- Chat (hidden until PIN entered) -->
+  <div class="messages" id="messages" style="display:none;"></div>
+  <div class="quick-prompts" id="quickPrompts" style="display:none;">
+    <button class="quick-prompt" onclick="askQuick(this)">How many enrollments this week?</button>
+    <button class="quick-prompt" onclick="askQuick(this)">Spots remaining in each open class</button>
+    <button class="quick-prompt" onclick="askQuick(this)">Contacts stuck at DAS Sent</button>
+    <button class="quick-prompt" onclick="askQuick(this)">Enrollments by status</button>
+    <button class="quick-prompt" onclick="askQuick(this)">Today's new contacts</button>
+  </div>
+  <div class="input-area" id="inputArea" style="display:none;">
+    <textarea id="userInput" placeholder="Ask anything about your Salesforce data — e.g., 'how many DAS Signed in the last 7 days?'" rows="1"></textarea>
+    <button class="send-btn" id="sendBtn" disabled onclick="sendMessage()">Ask</button>
+  </div>
+  <div class="footer">Powered by AATA · Read-only · 🔐 PIN-protected</div>
+</div>
+
+<script>
+const API_URL = "https://aata-proxy-production.up.railway.app/api/staff-query";
+const PIN_STORAGE_KEY = "aata_staff_pin";
+let currentPin = "";
+let isAsking = false;
+
+// ── PIN handling ──
+function checkPin() {
+  const pin = document.getElementById("pinInput").value.trim();
+  if (!pin) return;
+  // Try a no-op call to validate; we just send "ping" question
+  validatePin(pin);
+}
+
+async function validatePin(pin) {
+  const errEl = document.getElementById("pinError");
+  errEl.textContent = "Checking…";
+  try {
+    const r = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin, question: "list 1 contact" }),
+    });
+    if (r.status === 401) {
+      errEl.textContent = "Wrong PIN. Try again.";
+      return;
+    }
+    if (!r.ok && r.status !== 200) {
+      errEl.textContent = "Server error — try again in a moment.";
+      return;
+    }
+    // PIN ok — unlock UI
+    currentPin = pin;
+    try { localStorage.setItem(PIN_STORAGE_KEY, pin); } catch(e) {}
+    showChat();
+  } catch (err) {
+    errEl.textContent = "Network error: " + err.message;
+  }
+}
+
+function showChat() {
+  document.getElementById("pinGate").style.display = "none";
+  document.getElementById("messages").style.display = "block";
+  document.getElementById("quickPrompts").style.display = "flex";
+  document.getElementById("inputArea").style.display = "flex";
+  const badge = document.getElementById("badge");
+  badge.textContent = "✓ Authorized";
+  badge.classList.remove("locked");
+  // Welcome message
+  renderMessage("assistant",
+    "👋 **Hi! I'm your AATA staff data assistant.**\n\n" +
+    "I can answer any read-only question about your Salesforce data — Contacts, Classes, Class Registrations, Attendance.\n\n" +
+    "Just ask in plain English:\n" +
+    "• \"how many DAS Signed in the last 7 days?\"\n" +
+    "• \"show me Pratik Wagh's enrollment status\"\n" +
+    "• \"which contacts are stuck at DAS Sent more than 24 hours?\"\n" +
+    "• \"spots remaining in each open class\"\n\n" +
+    "I can read SSN and other sensitive fields if you ask — they'll be flagged with a warning."
+  );
+  document.getElementById("userInput").focus();
+}
+
+// Auto-unlock if PIN already saved
+(function tryAutoUnlock() {
+  let saved = "";
+  try { saved = localStorage.getItem(PIN_STORAGE_KEY) || ""; } catch(e) {}
+  if (saved) validatePin(saved);
+})();
+
+// ── Send / receive ──
+const inputEl = document.getElementById("userInput");
+const sendBtn = document.getElementById("sendBtn");
+inputEl.addEventListener("input", () => {
+  sendBtn.disabled = !inputEl.value.trim() || isAsking;
+  inputEl.style.height = "auto";
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + "px";
+});
+inputEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    if (!sendBtn.disabled) sendMessage();
+  }
+});
+
+function askQuick(btn) {
+  inputEl.value = btn.textContent;
+  inputEl.dispatchEvent(new Event("input"));
+  sendMessage();
+}
+
+async function sendMessage() {
+  if (isAsking) return;
+  const question = inputEl.value.trim();
+  if (!question) return;
+  inputEl.value = "";
+  inputEl.style.height = "auto";
+  sendBtn.disabled = true;
+  isAsking = true;
+
+  renderMessage("user", question);
+  showTyping();
+
+  try {
+    const r = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin: currentPin, question }),
+    });
+    const data = await r.json();
+    hideTyping();
+    if (r.status === 401) {
+      // PIN expired or invalid — kick back to gate
+      try { localStorage.removeItem(PIN_STORAGE_KEY); } catch(e) {}
+      renderMessage("assistant", "🔒 PIN no longer valid. Please refresh and re-enter.");
+      return;
+    }
+    if (!data.ok) {
+      renderMessage("assistant", "⚠️ " + (data.error || "Something went wrong."));
+      return;
+    }
+    renderMessage("assistant", data.answer, data.soql);
+  } catch (err) {
+    hideTyping();
+    renderMessage("assistant", "⚠️ Network error: " + err.message);
+  } finally {
+    isAsking = false;
+    sendBtn.disabled = !inputEl.value.trim();
+  }
+}
+
+// ── Rendering ──
+function renderMessage(role, text, soql) {
+  const container = document.getElementById("messages");
+  const div = document.createElement("div");
+  div.className = "message " + role;
+  let html = "";
+  if (role === "assistant") html += '<div class="bot-icon">📊</div>';
+  html += '<div class="bubble">' + renderMarkdown(text);
+  if (soql) {
+    html += `<details class="soql-footer"><summary>SOQL used</summary><pre>${escapeHtml(soql)}</pre></details>`;
+  }
+  html += '</div>';
+  div.innerHTML = html;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+// Minimal markdown renderer (bold, italic, code, headers, links, tables, lists, line breaks)
+function renderMarkdown(md) {
+  let s = escapeHtml(md);
+  // code blocks (```lang\n...\n```)
+  s = s.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, body) => `<pre><code>${body}</code></pre>`);
+  // inline code
+  s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // headers
+  s = s.replace(/^#### (.+)$/gm, '<strong>$1</strong>');
+  s = s.replace(/^### (.+)$/gm, '<strong>$1</strong>');
+  s = s.replace(/^## (.+)$/gm, '<strong>$1</strong>');
+  s = s.replace(/^# (.+)$/gm, '<strong>$1</strong>');
+  // bold
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  // italic (single * not adjacent to bold)
+  s = s.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
+  s = s.replace(/_([^_\n]+)_/g, '<em>$1</em>');
+  // links [text](url)
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+  // tables — detect lines with `|` and a separator row
+  s = renderTables(s);
+  // bullet lists
+  s = s.replace(/(^|\n)- (.+)/g, '$1<li>$2</li>');
+  s = s.replace(/(<li>[\s\S]+?<\/li>(\n|$))+/g, m => '<ul>' + m + '</ul>');
+  // numbered lists
+  s = s.replace(/(^|\n)\d+\. (.+)/g, '$1<li>$2</li>');
+  // line breaks
+  s = s.replace(/\n{2,}/g, '</p><p>');
+  s = '<p>' + s + '</p>';
+  s = s.replace(/<p>(<ul>|<pre>|<table>)/g, '$1').replace(/(<\/ul>|<\/pre>|<\/table>)<\/p>/g, '$1');
+  return s;
+}
+
+function renderTables(s) {
+  const lines = s.split('\n');
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const next = lines[i + 1] || '';
+    // markdown table: `| col | col |` then `|---|---|` then rows
+    if (line.includes('|') && /^\s*\|?\s*[-:]+\s*\|/.test(next)) {
+      const headers = line.split('|').map(c => c.trim()).filter(Boolean);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && lines[i].includes('|')) {
+        rows.push(lines[i].split('|').map(c => c.trim()).filter(Boolean));
+        i++;
+      }
+      let t = '<table><thead><tr>';
+      for (const h of headers) t += '<th>' + h + '</th>';
+      t += '</tr></thead><tbody>';
+      for (const r of rows) {
+        t += '<tr>';
+        for (const c of r) t += '<td>' + c + '</td>';
+        t += '</tr>';
+      }
+      t += '</tbody></table>';
+      out.push(t);
+    } else {
+      out.push(line);
+      i++;
+    }
+  }
+  return out.join('\n');
+}
+
+function showTyping() {
+  const container = document.getElementById("messages");
+  const div = document.createElement("div");
+  div.id = "typingIndicator";
+  div.className = "message assistant";
+  div.innerHTML = '<div class="bot-icon">📊</div><div class="bubble"><div class="typing"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div>';
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+function hideTyping() {
+  const t = document.getElementById("typingIndicator");
+  if (t) t.remove();
+}
+</script>
+</body>
+</html>
