@@ -398,7 +398,12 @@
     font-size: 14px;
     outline: none;
     background: var(--bg-container);
+    color: var(--fg-ink);
     transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  }
+  .input-area input::placeholder {
+    color: var(--fg-muted);
+    opacity: 0.8;
   }
   .input-area input:focus {
     border-color: var(--aata-cyan);
