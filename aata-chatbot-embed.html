@@ -364,9 +364,62 @@
 let config = {
   mode: "proxy",
   apiKey: "",
+  // Ordered list of proxy BASE URLs (no trailing path). First is primary;
+  // rest are backups for automatic failover. When the primary fails (network
+  // error, timeout, 5xx) the chatbot tries the next URL AND promotes the
+  // winner to the front for the rest of the session so subsequent calls
+  // skip the dead proxy. Add more URLs here to add more redundancy.
+  //
+  // Added Render backup after Railway-wide outage on 2026-05-19.
+  proxyBases: [
+    "https://aata-proxy-production.up.railway.app",  // primary (Railway)
+    "https://aata-proxy.onrender.com",               // backup (Render free tier)
+  ],
+  proxyTimeoutMs: 8000, // per-attempt timeout before failing over to next base
+  // Legacy single-URL field — kept in sync with the current preferred proxy
+  // so any code path that still reads config.proxyUrl gets the active URL.
   proxyUrl: "https://aata-proxy-production.up.railway.app/api/chat",
   salesforceFlowUrl: "https://americanaerospacetechnicalacademy.my.site.com/enroll",
 };
+
+// ============================================================
+// PROXY FAILOVER — tries each base in config.proxyBases in order
+// with a per-attempt timeout. On success, promotes that base to the
+// front of the list for the rest of the session (no repeated cold
+// starts). Throws only if EVERY proxy fails.
+// ============================================================
+async function fetchProxyWithFallback(path, init) {
+  const bases = config.proxyBases;
+  const errors = [];
+  for (let i = 0; i < bases.length; i++) {
+    const base = bases[i];
+    const url = base + path;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), config.proxyTimeoutMs);
+    try {
+      const res = await fetch(url, { ...init, signal: ctrl.signal });
+      clearTimeout(timer);
+      // 4xx is a real response — return it (don't fail over). Only fail over
+      // on 5xx or network errors, since 4xx means the proxy is alive and
+      // responding (just rejecting this specific request).
+      if (res.status >= 500) {
+        errors.push(`${url}: HTTP ${res.status}`);
+        continue;
+      }
+      // SUCCESS — promote this base so the rest of the session skips dead ones.
+      if (i > 0) {
+        config.proxyBases = [base, ...bases.filter((b) => b !== base)];
+        config.proxyUrl = base + "/api/chat";
+        console.warn(`[AATA chatbot] Proxy failover: now using ${base}. Earlier errors: ${errors.join(" | ")}`);
+      }
+      return res;
+    } catch (e) {
+      clearTimeout(timer);
+      errors.push(`${url}: ${e.name === "AbortError" ? "timeout" : e.message}`);
+    }
+  }
+  throw new Error(`All proxies failed: ${errors.join(" | ")}`);
+}
 let conversationHistory = [];
 let isTyping = false;
 let messageCount = 0;
@@ -796,7 +849,7 @@ async function callClaudeAPI(userMessage) {
   conversationHistory.push({ role: "user", content: userMessage });
 
   if (config.mode === "proxy") {
-    const res = await fetch(config.proxyUrl, {
+    const res = await fetchProxyWithFallback("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages: conversationHistory }),
@@ -922,8 +975,7 @@ async function resendEnrollmentEmails(email) {
   container.scrollTop = container.scrollHeight;
 
   try {
-    const ENDPOINT = (config.proxyUrl || "").replace(/\/api\/chat$/, "") + "/api/resend-enrollment-emails";
-    const res = await fetch(ENDPOINT, {
+    const res = await fetchProxyWithFallback("/api/resend-enrollment-emails", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email }),
@@ -992,8 +1044,7 @@ async function submitEnrollment(payload) {
   container.scrollTop = container.scrollHeight;
 
   try {
-    const ENDPOINT = (config.proxyUrl || "").replace(/\/api\/chat$/, "") + "/api/create-enrollment";
-    const res = await fetch(ENDPOINT, {
+    const res = await fetchProxyWithFallback("/api/create-enrollment", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -1051,7 +1102,7 @@ async function submitEnrollment(payload) {
 // Helper: call Claude with the current history without appending a new user message
 async function callClaudeAPIRaw() {
   if (config.mode === "proxy") {
-    const r = await fetch(config.proxyUrl, {
+    const r = await fetchProxyWithFallback("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages: conversationHistory }),
