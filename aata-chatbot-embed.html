@@ -1456,15 +1456,32 @@ function renderMessageBubble(role, text) {
     html += '<div class="bot-avatar">✈️</div>';
   }
 
-  // Markdown: headers, bold, links, bullets, line breaks
+  // Markdown: headers, bold, links, bullets, line breaks.
+  // STEP 0: collapse any LLM-emitted <a href="X">Y</a> down to the URL X
+  // so the linkifier below doesn't choke on stray quotes/attributes after
+  // the HTML escape step.
+  // STEP N (URLs): SINGLE combined pass for both https:// and www. so the
+  // second pattern can't re-wrap a URL the first pattern already wrapped
+  // (the "https://www..." nested-anchor bug).
   let formatted = text
+    .replace(/<a\s+[^>]*href=["']([^"']+)["'][^>]*>[^<]*<\/a>/gi, "$1")
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/^#{1,4}\s+(.+)$/gm, "<strong>$1</strong>")
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/^\s*[-•]\s+/gm, "• ")
     .replace(/^\s*\d+\.\s+/gm, function(match) { return match.trim() + " "; })
-    .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank">$1</a>')
-    .replace(/(www\.[^\s<]+)/g, '<a href="https://$1" target="_blank">$1</a>');
+    .replace(
+      // Match either https?:// OR www. then a body of safe chars (no
+      // whitespace, no quotes, no < > ( ) , ; ) ending on a non-punctuation
+      // char so a trailing period / comma stays in the sentence.
+      /(?:^|\s|>)((?:https?:\/\/|www\.)[^\s<"'()<>,;]+[^\s<"'()<>,;.])/g,
+      function (full, url) {
+        var href = url.startsWith('www.') ? 'https://' + url : url;
+        // Preserve any leading whitespace / character the lookbehind matched.
+        var lead = full.slice(0, full.length - url.length);
+        return lead + '<a href="' + href + '" target="_blank">' + url + '</a>';
+      }
+    );
 
   html += `<div class="bubble">${formatted}</div>`;
   div.innerHTML = html;
