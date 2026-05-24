@@ -1267,6 +1267,25 @@ function renderMessage(role, text) {
     return;
   }
 
+  // Handle [CREATE_TX_LEAD]{...json...} marker — Claude has collected 4 fields
+  // from a Texas prospect. POST to /api/create-tx-lead, show success card
+  // with Patrick's Google Form link.
+  const txMatch = remaining.match(/\[CREATE_TX_LEAD\]\s*(\{[\s\S]*?\})\s*$/);
+  if (txMatch) {
+    const before = remaining.slice(0, txMatch.index).trim();
+    if (before) renderMessageBubble(role, before);
+    let payload;
+    try {
+      payload = JSON.parse(txMatch[1]);
+    } catch (e) {
+      renderMessageBubble(role, "⚠️ I had trouble saving your details. Please try again, or call Patrick directly at (281) 676-0356.");
+      console.error("CREATE_TX_LEAD JSON parse failed:", e, txMatch[1]);
+      return;
+    }
+    submitTxLead(payload);
+    return;
+  }
+
   // Render any remaining text
   if (remaining.trim()) {
     renderMessageBubble(role, remaining.trim());
@@ -1408,6 +1427,81 @@ async function submitEnrollment(payload) {
   } catch (err) {
     const card = document.getElementById("enrollmentSubmittingCard");
     card.innerHTML = `<strong>⚠️ Network error</strong><br><br>${err.message}. Please retry or email <a href="mailto:info@aatatraining.org">info@aatatraining.org</a>.`;
+    card.style.background = "#fef9c3";
+    card.style.border = "2px solid #f59e0b";
+    console.error(err);
+  }
+}
+
+// ── TX lead capture — minimal version. POSTs 4 fields to SF, then shows
+// a card with Patrick's Google Form link and his direct contact info.
+async function submitTxLead(payload) {
+  const container = document.getElementById("messages");
+  const wrapper = document.createElement("div");
+  wrapper.className = "message assistant";
+  wrapper.innerHTML = `
+    <div class="bot-avatar">✈️</div>
+    <div class="bubble" id="txLeadCard">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div class="typing-dot" style="background:#00AEEF;width:8px;height:8px;animation:none;"></div>
+        <strong>Saving your details…</strong>
+      </div>
+    </div>`;
+  container.appendChild(wrapper);
+  container.scrollTop = container.scrollHeight;
+
+  try {
+    const res = await fetchProxyWithFallback("/api/create-tx-lead", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    const card = document.getElementById("txLeadCard");
+    if (!res.ok || !data.ok) {
+      card.innerHTML = `<strong>⚠️ Couldn't save your details</strong><br><br>${data.error || "Unknown error"}<br><br>Please call Patrick directly at <strong>(281) 676-0356</strong> or email <a href="mailto:patrickaata@gmail.com">patrickaata@gmail.com</a>.`;
+      card.style.background = "#fef9c3";
+      card.style.border = "2px solid #f59e0b";
+      conversationHistory.push({
+        role: "user",
+        content: `[SYSTEM: TX lead save failed: ${data.error || "unknown error"}. Apologize briefly and tell them to contact Patrick directly at (281) 676-0356 or patrickaata@gmail.com.]`,
+      });
+    } else {
+      const formUrl = data.googleFormUrl || "https://docs.google.com/forms/d/e/1FAIpQLSfJPnbKq-LCMA9fcbFUHNS0ii8ppDfRaUWE2mQQUIBSiVs6Mg/viewform";
+      card.innerHTML = `
+        <div style="background:linear-gradient(135deg,#f0f9ff,#ecfeff);border:2px solid #00AEEF;border-radius:12px;padding:16px;">
+          <strong style="color:#075985;font-size:15px;">✅ You're in the system!</strong>
+          <div style="margin-top:10px;color:#334155;font-size:14px;line-height:1.6;">
+            Next step — fill out Patrick's intake form (takes ~10 min):
+          </div>
+          <a href="${formUrl}" target="_blank" rel="noopener" style="display:inline-block;margin-top:12px;padding:10px 18px;background:linear-gradient(135deg,#00AEEF,#0089BD);color:#fff;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;">
+            Open Texas Intake Form →
+          </a>
+          <div style="margin-top:14px;padding-top:12px;border-top:1px solid #cbd5e1;color:#64748b;font-size:12px;line-height:1.5;">
+            <strong>Or contact Patrick directly:</strong><br>
+            📞 <a href="tel:+12816760356" style="color:#00AEEF;">(281) 676-0356</a> &nbsp; · &nbsp;
+            ✉ <a href="mailto:patrickaata@gmail.com" style="color:#00AEEF;">patrickaata@gmail.com</a>
+          </div>
+        </div>`;
+      conversationHistory.push({
+        role: "user",
+        content: `[SYSTEM: TX lead saved successfully in Salesforce (Contact ${data.contactId}). The success card with Patrick's Google Form link and direct contact info is now shown to the student. Briefly acknowledge — one short sentence like "All set! Patrick will reach out after you submit." — and then stop. Do NOT re-explain the form or repeat Patrick's contact info; the card already shows it.]`,
+      });
+    }
+    setTimeout(async () => {
+      isTyping = true; showTyping();
+      try {
+        const replyText = await callClaudeAPIRaw();
+        hideTyping();
+        renderMessage("assistant", replyText);
+        conversationHistory.push({ role: "assistant", content: replyText });
+      } catch (e) { hideTyping(); }
+      isTyping = false;
+    }, 600);
+    container.scrollTop = container.scrollHeight;
+  } catch (err) {
+    const card = document.getElementById("txLeadCard");
+    card.innerHTML = `<strong>⚠️ Network error</strong><br><br>${err.message}. Please call Patrick at <strong>(281) 676-0356</strong>.`;
     card.style.background = "#fef9c3";
     card.style.border = "2px solid #f59e0b";
     console.error(err);
