@@ -812,6 +812,124 @@ let messageCount = 0;
 let availableClasses = []; // Fetched live from Salesforce
 
 // ============================================================
+// CONVERSATION LOGGING — every chat is upserted to Salesforce
+// (Chatbot_Conversation__c) keyed by sessionId. Debounced during the
+// session, flushed via sendBeacon on page hide.
+// ============================================================
+const sessionStartedAt = new Date().toISOString();
+let sessionId;
+try {
+  sessionId = sessionStorage.getItem("aata_chat_session_id");
+  if (!sessionId) {
+    sessionId = (crypto && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : "s-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
+    sessionStorage.setItem("aata_chat_session_id", sessionId);
+  }
+} catch (e) {
+  sessionId = "s-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
+}
+
+// Mutable session metadata — populated as the conversation progresses
+const sessionMeta = {
+  email: null, firstName: null, lastName: null, phone: null,
+  track: null, contactId: null, enrollmentCreated: false,
+};
+
+let _logDebounceTimer = null;
+let _logInflight = false;
+let _logDirty = false;
+
+function buildLogPayload(ended) {
+  // Map conversationHistory into a transcript array. Skip system markers
+  // (lines starting with "[SYSTEM" or "[SYSTEM_INTERNAL") because they're
+  // internal coordination, not real student/bot turns.
+  const transcript = [];
+  for (const m of conversationHistory) {
+    if (!m || !m.role || !m.content) continue;
+    const c = typeof m.content === "string" ? m.content : "";
+    if (c.startsWith("[SYSTEM") || c.startsWith("[CREATE_") || c.startsWith("[TX_")) continue;
+    transcript.push({ role: m.role, content: c });
+  }
+  return {
+    sessionId,
+    startedAt: sessionStartedAt,
+    transcript,
+    messageCount: transcript.length,
+    ended: Boolean(ended),
+    email: sessionMeta.email,
+    firstName: sessionMeta.firstName,
+    lastName: sessionMeta.lastName,
+    phone: sessionMeta.phone,
+    track: sessionMeta.track || "Unknown",
+    contactId: sessionMeta.contactId,
+    enrollmentCreated: sessionMeta.enrollmentCreated,
+    source: "chatbot-embed",
+    pageUrl: (location && location.href) ? location.href.slice(0, 255) : "",
+  };
+}
+
+function flushLog(ended) {
+  // Don't log empty sessions
+  if (conversationHistory.length === 0) return;
+  const payload = buildLogPayload(ended);
+  const json = JSON.stringify(payload);
+
+  // On page hide, prefer sendBeacon — fire-and-forget, survives navigation
+  if (ended && navigator.sendBeacon) {
+    try {
+      const blob = new Blob([json], { type: "application/json" });
+      const base = (config.proxyBases && config.proxyBases[0]) || "https://aata-proxy-production.up.railway.app";
+      navigator.sendBeacon(base + "/api/log-conversation", blob);
+      _logDirty = false;
+      return;
+    } catch (e) { /* fall through to fetch */ }
+  }
+
+  // Skip if a request is already in flight (the next debounce will catch up)
+  if (_logInflight) return;
+  _logInflight = true;
+  _logDirty = false;
+  fetchProxyWithFallback("/api/log-conversation", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: json,
+    keepalive: true, // survive page navigation up to 64KB
+  })
+    .catch((err) => {
+      console.warn("[log-conversation] failed:", err.message);
+      _logDirty = true; // retry on next tick
+    })
+    .finally(() => { _logInflight = false; });
+}
+
+function scheduleLog() {
+  _logDirty = true;
+  clearTimeout(_logDebounceTimer);
+  _logDebounceTimer = setTimeout(() => {
+    if (_logDirty) flushLog(false);
+  }, 5000);
+}
+
+// Monkey-patch conversationHistory.push to trigger a debounced log on
+// every message append. (conversationHistory is never reassigned, so the
+// patch is safe for the session.)
+(function () {
+  const _origPush = conversationHistory.push.bind(conversationHistory);
+  conversationHistory.push = function (...args) {
+    const r = _origPush(...args);
+    try { scheduleLog(); } catch (e) {}
+    return r;
+  };
+})();
+
+// Flush on tab hide / page unload
+window.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") flushLog(true);
+});
+window.addEventListener("pagehide", () => flushLog(true));
+
+// ============================================================
 // FETCH AVAILABLE CLASSES FROM SALESFORCE (on page load)
 // ============================================================
 async function loadAvailableClasses() {
@@ -1201,6 +1319,11 @@ async function submitStatusCheck() {
     const container = document.getElementById("messages");
 
     if (data.found && data.enrollmentStatus) {
+      // Returning student — capture identity on the conversation log
+      sessionMeta.email = email;
+      sessionMeta.firstName = data.firstName || sessionMeta.firstName;
+      if (data.contactId) sessionMeta.contactId = data.contactId;
+      flushLog(false);
       // Show status card
       const statusMessages = {
         "Step 1 Complete": "Your enrollment form is submitted! We've sent you the DAS 1 Apprenticeship Agreement via email for e-signature. Please check your inbox (and spam folder) for an email from Box Sign.",
@@ -1484,6 +1607,13 @@ async function submitEnrollment(payload) {
   // pick up where we left off (the chatbot needs to know who's returning).
   try { localStorage.setItem("aata_pending_email", payload.email || ""); } catch (e) {}
 
+  // Capture session metadata so the conversation log carries identity
+  sessionMeta.email     = payload.email     || sessionMeta.email;
+  sessionMeta.firstName = payload.firstName || sessionMeta.firstName;
+  sessionMeta.lastName  = payload.lastName  || sessionMeta.lastName;
+  sessionMeta.phone     = payload.mobilePhone || sessionMeta.phone;
+  sessionMeta.track     = "California";
+
   const container = document.getElementById("messages");
   const wrapper = document.createElement("div");
   wrapper.className = "message assistant";
@@ -1529,6 +1659,10 @@ async function submitEnrollment(payload) {
         role: "user",
         content: `[SYSTEM: Enrollment created successfully in Salesforce (Contact ${data.contactId}, Class "${data.className}"). The DAS 1 Apprenticeship Agreement will arrive in their email within 1-2 minutes via Box Sign. After they sign it, two emails will follow automatically: Foothill College enrollment + book fee payment. Tell the student to watch their inbox and reassure them no more chatbot steps are needed.]`,
       });
+      // Capture enrollment outcome on the conversation log
+      sessionMeta.contactId = data.contactId || sessionMeta.contactId;
+      sessionMeta.enrollmentCreated = true;
+      flushLog(false); // immediate write — don't wait for debounce
     }
     // Auto-continue conversation so Claude responds to the system message
     setTimeout(async () => {
@@ -1557,6 +1691,13 @@ async function submitEnrollment(payload) {
 // ── TX lead capture — minimal version. POSTs 4 fields to SF, then shows
 // a card with Patrick's Google Form link and his direct contact info.
 async function submitTxLead(payload) {
+  // Capture session metadata so the conversation log carries identity + track
+  sessionMeta.email     = payload.email     || sessionMeta.email;
+  sessionMeta.firstName = payload.firstName || sessionMeta.firstName;
+  sessionMeta.lastName  = payload.lastName  || sessionMeta.lastName;
+  sessionMeta.phone     = payload.mobilePhone || payload.phone || sessionMeta.phone;
+  sessionMeta.track     = "Texas";
+
   const container = document.getElementById("messages");
   const wrapper = document.createElement("div");
   wrapper.className = "message assistant";
@@ -1608,6 +1749,9 @@ async function submitTxLead(payload) {
         role: "user",
         content: `[SYSTEM: TX lead saved successfully in Salesforce (Contact ${data.contactId}). The success card with Patrick's Google Form link and direct contact info is now shown to the student. Briefly acknowledge — one short sentence like "All set! Patrick will reach out after you submit." — and then stop. Do NOT re-explain the form or repeat Patrick's contact info; the card already shows it.]`,
       });
+      sessionMeta.contactId = data.contactId || sessionMeta.contactId;
+      sessionMeta.enrollmentCreated = true;
+      flushLog(false);
     }
     setTimeout(async () => {
       isTyping = true; showTyping();
