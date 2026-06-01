@@ -440,6 +440,77 @@
     letter-spacing: 0.3px;
   }
 
+  /* Always contain scroll inside the message list so swiping past the top/bottom
+     doesn't scroll the host page (fixes iOS scroll-chaining). */
+  .messages { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+
+  /* ── Mobile (phones & small tablets) ── */
+  @media (max-width: 640px) {
+    html, body {
+      /* Lock the page so only the .messages list scrolls. Stops the address bar
+         from collapsing/expanding while you scroll the chat. */
+      height: 100%;
+      overflow: hidden;
+      overscroll-behavior: none;
+      position: fixed;
+      inset: 0;
+      width: 100%;
+    }
+    body {
+      /* dvh = dynamic viewport height — accounts for iOS URL bar correctly */
+      height: 100dvh;
+      display: block;            /* drop the centering wrapper on mobile */
+    }
+    .chat-container {
+      width: 100%;
+      max-width: none;
+      height: 100dvh;
+      max-height: none;
+      border-radius: 0;          /* full-bleed, no wasted edge gutters */
+      box-shadow: none;
+    }
+
+    /* Tighten the header on small screens */
+    .header { padding: 10px 14px; gap: 10px; }
+    .header-avatar { width: 38px; height: 38px; font-size: 18px; border-radius: 12px; }
+    .header-text h1 { font-size: 14px; }
+    .header-text p  { font-size: 11px; }
+    .status-dot { padding: 3px 8px 3px 6px; font-size: 10px; }
+
+    /* Message area — slightly tighter padding for more vertical room */
+    .messages { padding: 14px 12px 6px; }
+
+    /* Quick questions: single horizontally-swipeable row instead of wrapping
+       3-4 rows that eat the whole screen. */
+    .quick-questions {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 4px 12px 8px;
+      gap: 6px;
+      scroll-snap-type: x proximity;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior-x: contain;
+      /* Hide the scrollbar but keep functionality */
+      scrollbar-width: none;
+    }
+    .quick-questions::-webkit-scrollbar { display: none; }
+    .quick-btn {
+      flex: 0 0 auto;            /* don't shrink — keep label readable */
+      scroll-snap-align: start;
+      padding: 7px 12px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    /* Input row — tighten padding, slightly smaller send button */
+    .input-area { padding: 10px 12px; gap: 8px; }
+    .input-area input { padding: 10px 14px; font-size: 14px; }
+    .send-btn { width: 40px; height: 40px; font-size: 16px; }
+
+    .footer { padding: 6px 0 8px; font-size: 10px; }
+  }
+
   /* ── Reduced motion ── */
   @media (prefers-reduced-motion: reduce) {
     .header::before,
