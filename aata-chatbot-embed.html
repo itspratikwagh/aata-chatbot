@@ -697,6 +697,7 @@
       type="button"
       onclick="aataToggleTheme()"
       aria-label="Toggle dark mode"
+      aria-pressed="false"
       title="Toggle dark mode">
       <span class="theme-icon-sun" aria-hidden="true">☀</span>
       <span class="theme-icon-moon" aria-hidden="true">☾</span>
@@ -727,11 +728,31 @@
 // THEME TOGGLE — flip between light and dark, persist to localStorage.
 // The initial theme was set by the early-init script in <head>.
 // ============================================================
+// Reflect current theme on the toggle button so screen readers announce
+// "pressed" vs "not pressed" correctly. Call after every theme change.
+function aataSyncThemeAria() {
+  var btn = document.getElementById('themeToggle');
+  if (!btn) return;
+  var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  btn.setAttribute('aria-pressed', isDark ? 'true' : 'false');
+  var label = isDark ? 'Switch to light mode' : 'Switch to dark mode';
+  btn.setAttribute('aria-label', label);
+  btn.setAttribute('title', label);
+}
+
 function aataToggleTheme() {
   var current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
   var next = current === 'dark' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', next);
   try { localStorage.setItem('aata-theme', next); } catch (e) {}
+  aataSyncThemeAria();
+}
+
+// Initial sync so the button state matches the early-init theme
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', aataSyncThemeAria);
+} else {
+  aataSyncThemeAria();
 }
 
 // If the user has NOT explicitly chosen a theme yet, follow their system
@@ -740,6 +761,7 @@ if (window.matchMedia) {
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function (e) {
     if (!localStorage.getItem('aata-theme')) {
       document.documentElement.setAttribute('data-theme', e.matches ? 'dark' : 'light');
+      aataSyncThemeAria();
     }
   });
 }
@@ -938,16 +960,20 @@ function scheduleLog() {
   }, 5000);
 }
 
-// Monkey-patch conversationHistory.push to trigger a debounced log on
-// every message append. (conversationHistory is never reassigned, so the
-// patch is safe for the session.)
+// Monkey-patch every mutating method on conversationHistory to trigger a
+// debounced log. push() is the main path today; splice/unshift are wrapped
+// defensively so a future refactor doesn't silently disable logging.
+// (conversationHistory is never reassigned, so the patch holds for the
+// session.)
 (function () {
-  const _origPush = conversationHistory.push.bind(conversationHistory);
-  conversationHistory.push = function (...args) {
-    const r = _origPush(...args);
-    try { scheduleLog(); } catch (e) {}
-    return r;
-  };
+  ["push", "splice", "unshift"].forEach((method) => {
+    const orig = conversationHistory[method].bind(conversationHistory);
+    conversationHistory[method] = function (...args) {
+      const r = orig(...args);
+      try { scheduleLog(); } catch (e) {}
+      return r;
+    };
+  });
 })();
 
 // Flush on tab hide / page unload
@@ -969,9 +995,20 @@ async function loadAvailableClasses() {
     // Inject class info into the system prompt so Claude has live data
     if (availableClasses.length > 0) {
       let classInfo = "\n\n## LIVE CLASS AVAILABILITY (from Salesforce - do NOT use hardcoded class info, use this instead):\n";
+      // Parse YYYY-MM-DD as a local-time date by passing components
+      // directly. Avoids the historic ECMAScript ambiguity between
+      // "2026-08-03" (UTC) and "2026-08-03T00:00:00" (local) — older
+      // browsers and JS engines interpreted these inconsistently.
+      const fmtYMD = (s) => {
+        const [y, m, d] = (s || "").split("-").map(Number);
+        if (!y || !m || !d) return s || "";
+        return new Date(y, m - 1, d).toLocaleDateString("en-US", {
+          month: "long", day: "numeric", year: "numeric"
+        });
+      };
       availableClasses.forEach((c, i) => {
-        const start = new Date(c.startDate + "T00:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
-        const end = new Date(c.endDate + "T00:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+        const start = fmtYMD(c.startDate);
+        const end = fmtYMD(c.endDate);
         const isDay = c.name.toLowerCase().includes("day");
         const schedule = isDay ? "8 AM to 4 PM PST, Monday through Friday" : "5 PM to 10 PM PST, Monday through Friday";
         classInfo += `\n### ${c.name}\n`;
@@ -1878,30 +1915,36 @@ function renderMessageBubble(role, text) {
 
   // Markdown: headers, bold, links, bullets, line breaks.
   // STEP 0: collapse any LLM-emitted <a href="X">Y</a> down to the URL X
-  // so the linkifier below doesn't choke on stray quotes/attributes after
-  // the HTML escape step.
-  // STEP N (URLs): SINGLE combined pass for both https:// and www. so the
-  // second pattern can't re-wrap a URL the first pattern already wrapped
-  // (the "https://www..." nested-anchor bug).
-  let formatted = text
-    .replace(/<a\s+[^>]*href=["']([^"']+)["'][^>]*>[^<]*<\/a>/gi, "$1")
+  // so we own the rendering and don't trust whatever attrs Claude wrote.
+  // STEP 1 (linkify): extract URLs into placeholders BEFORE HTML-escaping
+  // the rest of the text. This avoids the "& in URL becomes &amp; then
+  // the URL regex bails at the entity boundary" bug that produced broken
+  // hrefs like https://foo.com/?a=1&amp (truncated at ;).
+  let formatted = text.replace(/<a\s+[^>]*href=["']([^"']+)["'][^>]*>[^<]*<\/a>/gi, "$1");
+  const _anchors = [];
+  formatted = formatted.replace(
+    // Match https?:// OR www. then safe chars (no whitespace/quotes/HTML
+    // brackets/parens/comma/semicolon). End on a non-punctuation char so
+    // trailing . , stays in the sentence rather than the URL.
+    /(?:https?:\/\/|www\.)[^\s<"'()<>,;]+[^\s<"'()<>,;.]/g,
+    (url) => {
+      const href = url.startsWith("www.") ? "https://" + url : url;
+      const idx = _anchors.length;
+      // Anchor's href + visible text both pre-escaped via esc() so a
+      // weird URL can't break out of the attribute or inject HTML.
+      _anchors.push('<a href="' + esc(href) + '" target="_blank" rel="noopener">' + esc(url) + "</a>");
+      return "ANCHOR" + idx + "";
+    }
+  );
+  // STEP 2: now safely escape the remaining text (URLs are off in sentinels)
+  formatted = formatted
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/^#{1,4}\s+(.+)$/gm, "<strong>$1</strong>")
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/^\s*[-•]\s+/gm, "• ")
-    .replace(/^\s*\d+\.\s+/gm, function(match) { return match.trim() + " "; })
-    .replace(
-      // Match either https?:// OR www. then a body of safe chars (no
-      // whitespace, no quotes, no < > ( ) , ; ) ending on a non-punctuation
-      // char so a trailing period / comma stays in the sentence.
-      /(?:^|\s|>)((?:https?:\/\/|www\.)[^\s<"'()<>,;]+[^\s<"'()<>,;.])/g,
-      function (full, url) {
-        var href = url.startsWith('www.') ? 'https://' + url : url;
-        // Preserve any leading whitespace / character the lookbehind matched.
-        var lead = full.slice(0, full.length - url.length);
-        return lead + '<a href="' + href + '" target="_blank">' + url + '</a>';
-      }
-    );
+    .replace(/^\s*\d+\.\s+/gm, function (match) { return match.trim() + " "; });
+  // STEP 3: restore the anchors
+  formatted = formatted.replace(/ANCHOR(\d+)/g, (_, i) => _anchors[Number(i)] || "");
 
   html += `<div class="bubble">${formatted}</div>`;
   div.innerHTML = html;
@@ -1970,8 +2013,13 @@ const dasParam = new URLSearchParams(window.location.search).get("das");
 if (dasParam === "signed") {
   // Student just signed the DAS via Box. Read the email we stored during
   // enrollment so the bot can offer to send the next two emails on demand.
+  // Clear it immediately after read — once consumed, no reason to keep the
+  // PII around on a possibly-shared device.
   let savedEmail = "";
-  try { savedEmail = localStorage.getItem("aata_pending_email") || ""; } catch (e) {}
+  try {
+    savedEmail = localStorage.getItem("aata_pending_email") || "";
+    localStorage.removeItem("aata_pending_email");
+  } catch (e) {}
 
   if (savedEmail) {
     renderMessage("assistant",
