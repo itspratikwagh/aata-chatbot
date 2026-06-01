@@ -817,6 +817,14 @@ let availableClasses = []; // Fetched live from Salesforce
 // session, flushed via sendBeacon on page hide.
 // ============================================================
 const sessionStartedAt = new Date().toISOString();
+// HTML-escape any dynamic value before interpolating into innerHTML.
+// Centralized so we don't have to remember at every interpolation site.
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
 let sessionId;
 try {
   sessionId = sessionStorage.getItem("aata_chat_session_id");
@@ -851,12 +859,13 @@ function buildLogPayload(ended) {
     if (c.startsWith("[SYSTEM") || c.startsWith("[CREATE_") || c.startsWith("[TX_")) continue;
     transcript.push({ role: m.role, content: c });
   }
-  return {
+  // Only send `ended` when true — keeps the field monotonic on the server,
+  // so a stale in-flight unended write can't overwrite a beacon's ended:true.
+  const out = {
     sessionId,
     startedAt: sessionStartedAt,
     transcript,
     messageCount: transcript.length,
-    ended: Boolean(ended),
     email: sessionMeta.email,
     firstName: sessionMeta.firstName,
     lastName: sessionMeta.lastName,
@@ -867,6 +876,8 @@ function buildLogPayload(ended) {
     source: "chatbot-embed",
     pageUrl: (location && location.href) ? location.href.slice(0, 255) : "",
   };
+  if (ended) out.ended = true;
+  return out;
 }
 
 function flushLog(ended) {
@@ -875,14 +886,30 @@ function flushLog(ended) {
   const payload = buildLogPayload(ended);
   const json = JSON.stringify(payload);
 
-  // On page hide, prefer sendBeacon — fire-and-forget, survives navigation
+  // On page hide, prefer sendBeacon — fire-and-forget, survives navigation.
+  // Send to ALL proxy bases (Railway + Render) since sendBeacon can't observe
+  // success/failure. Worst case: a duplicate upsert (server uses Session_Id__c
+  // external ID so the second write is just a harmless idempotent update).
   if (ended && navigator.sendBeacon) {
     try {
       const blob = new Blob([json], { type: "application/json" });
-      const base = (config.proxyBases && config.proxyBases[0]) || "https://aata-proxy-production.up.railway.app";
-      navigator.sendBeacon(base + "/api/log-conversation", blob);
-      _logDirty = false;
-      return;
+      const bases = (config.proxyBases && config.proxyBases.length)
+        ? config.proxyBases
+        : ["https://aata-proxy-production.up.railway.app"];
+      let queued = false;
+      for (const base of bases) {
+        // sendBeacon returns false if the browser refuses (e.g., >64KB or
+        // queue full). Try every base so we have at least one in-flight.
+        if (navigator.sendBeacon(base + "/api/log-conversation", blob)) {
+          queued = true;
+        }
+      }
+      if (queued) {
+        _logDirty = false;
+        return;
+      }
+      // If no beacon queued (rare — large payload?), fall through to fetch
+      // with keepalive, which has its own size constraints but tries hard.
     } catch (e) { /* fall through to fetch */ }
   }
 
@@ -934,7 +961,7 @@ window.addEventListener("pagehide", () => flushLog(true));
 // ============================================================
 async function loadAvailableClasses() {
   try {
-    const res = await fetch("https://aata-proxy-production.up.railway.app/api/available-classes");
+    const res = await fetchProxyWithFallback("/api/available-classes", { method: "GET" });
     const data = await res.json();
     availableClasses = data.classes || [];
     console.log("📚 Loaded " + availableClasses.length + " available classes from Salesforce");
@@ -1304,15 +1331,31 @@ async function submitStatusCheck() {
   const email = input?.value?.trim();
   if (!email) return;
 
+  // Light email sanity check before sending to SF
+  const emailLooksValid = /^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/.test(email);
+  if (!emailLooksValid) {
+    renderMessage("assistant", "That doesn't look like a complete email address. Can you double-check it?");
+    return;
+  }
+
+  const submitBtn = input.parentElement.querySelector("button");
   // Disable input
   input.disabled = true;
-  input.parentElement.querySelector("button").disabled = true;
+  if (submitBtn) submitBtn.disabled = true;
+  // Re-enables the input/button so a user can retry after an error.
+  const reenable = () => {
+    if (input) { input.disabled = false; input.focus(); }
+    if (submitBtn) submitBtn.disabled = false;
+  };
 
   // Show typing
   showTyping();
 
   try {
-    const res = await fetch(`https://aata-proxy-production.up.railway.app/api/enrollment-status?email=${encodeURIComponent(email)}`);
+    const res = await fetchProxyWithFallback(
+      `/api/enrollment-status?email=${encodeURIComponent(email)}`,
+      { method: "GET" }
+    );
     const data = await res.json();
     hideTyping();
 
@@ -1334,7 +1377,7 @@ async function submitStatusCheck() {
         "Fully Enrolled": "You're fully enrolled! Welcome to AATA! 🎉 Your class details have been confirmed."
       };
 
-      const statusMsg = statusMessages[data.enrollmentStatus] || `Current status: ${data.enrollmentStatus}`;
+      const statusMsg = statusMessages[data.enrollmentStatus] || `Current status: ${esc(data.enrollmentStatus)}`;
 
       const card = document.createElement("div");
       card.className = "message assistant";
@@ -1342,10 +1385,10 @@ async function submitStatusCheck() {
         <div class="bot-avatar">✈️</div>
         <div class="status-card">
           <div class="status-card-inner">
-            <h3>Welcome back, ${data.firstName}!</h3>
-            <p><strong>Enrollment Status:</strong> ${data.enrollmentStatus}</p>
+            <h3>Welcome back, ${esc(data.firstName)}!</h3>
+            <p><strong>Enrollment Status:</strong> ${esc(data.enrollmentStatus)}</p>
             <p>${statusMsg}</p>
-            ${data.classSelection ? `<p><strong>Class:</strong> ${data.classSelection}</p>` : ""}
+            ${data.classSelection ? `<p><strong>Class:</strong> ${esc(data.classSelection)}</p>` : ""}
           </div>
         </div>
       `;
@@ -1357,15 +1400,17 @@ async function submitStatusCheck() {
         content: `[SYSTEM: Returning student identified. Name: ${data.firstName} ${data.lastName}, Email: ${data.email}, Enrollment Status: ${data.enrollmentStatus}, Class: ${data.classSelection || "unknown"}. Guide them based on their current status.]`
       });
 
-      // Get Claude's personalized follow-up
+      // Get Claude's personalized follow-up. Set isTyping=true synchronously
+      // BEFORE the await so a quick second click can't double-fire.
+      isTyping = true;
       setTimeout(async () => {
-        isTyping = true;
         showTyping();
         const reply = await getResponse(`[Returning student ${data.firstName} checked status: ${data.enrollmentStatus}]`);
         hideTyping();
         renderMessage("assistant", reply);
         isTyping = false;
       }, 500);
+      // Found path leaves input disabled — they don't need to re-check.
 
     } else {
       // Not found
@@ -1376,25 +1421,27 @@ async function submitStatusCheck() {
         <div class="status-card">
           <div class="status-card-inner not-found">
             <h3>No enrollment found</h3>
-            <p>We couldn't find an enrollment record for <strong>${email}</strong>. This could mean you haven't started the enrollment process yet, or you used a different email.</p>
+            <p>We couldn't find an enrollment record for <strong>${esc(email)}</strong>. This could mean you haven't started the enrollment process yet, or you used a different email.</p>
           </div>
         </div>
       `;
       container.appendChild(card);
 
-      // Let Claude guide them to start fresh
+      // Let Claude guide them to start fresh. Same isTyping-before-await pattern.
+      isTyping = true;
       setTimeout(async () => {
-        isTyping = true;
         showTyping();
         const reply = await getResponse("I checked my enrollment status but nothing was found. I may be a new student.");
         hideTyping();
         renderMessage("assistant", reply);
         isTyping = false;
       }, 500);
+      reenable(); // Let them retry with a different email if they mistyped
     }
   } catch (err) {
     hideTyping();
     renderMessage("assistant", "⚠️ Sorry, I couldn't check your enrollment status right now. Please try again or contact us at info@aatatraining.org.");
+    reenable();
   }
 
   const container = document.getElementById("messages");
@@ -1406,47 +1453,61 @@ async function submitStatusCheck() {
 // ============================================================
 async function callClaudeAPI(userMessage) {
   conversationHistory.push({ role: "user", content: userMessage });
-
-  if (config.mode === "proxy") {
-    const res = await fetchProxyWithFallback("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: conversationHistory }),
-    });
-    if (!res.ok) throw new Error(`Proxy error: ${res.status}`);
-    const data = await res.json();
-    const reply = data.content?.[0]?.text || data.reply || data.message || JSON.stringify(data);
-    conversationHistory.push({ role: "assistant", content: reply });
-    return reply;
-  }
-
-  if (config.mode === "direct") {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": config.apiKey,
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 1024,
-        system: SYSTEM_PROMPT,
-        messages: conversationHistory,
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `API error: ${res.status}`);
+  // If the call throws, pop the user message back off so the next attempt
+  // doesn't send a conversation ending with an unanswered user turn (which
+  // Anthropic rejects, and which also pollutes the SF transcript log).
+  const undoUserPush = () => {
+    const last = conversationHistory[conversationHistory.length - 1];
+    if (last && last.role === "user" && last.content === userMessage) {
+      conversationHistory.pop();
     }
-    const data = await res.json();
-    const reply = data.content[0].text;
-    conversationHistory.push({ role: "assistant", content: reply });
-    return reply;
-  }
+  };
 
-  throw new Error("No API configured");
+  try {
+    if (config.mode === "proxy") {
+      const res = await fetchProxyWithFallback("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: conversationHistory }),
+      });
+      if (!res.ok) throw new Error(`Proxy error: ${res.status}`);
+      const data = await res.json();
+      const reply = data.content?.[0]?.text || data.reply || data.message || "(empty response)";
+      conversationHistory.push({ role: "assistant", content: reply });
+      return reply;
+    }
+
+    if (config.mode === "direct") {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": config.apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+        body: JSON.stringify({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 1024,
+          system: SYSTEM_PROMPT,
+          messages: conversationHistory,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error?.message || `API error: ${res.status}`);
+      }
+      const data = await res.json();
+      const reply = data.content[0].text;
+      conversationHistory.push({ role: "assistant", content: reply });
+      return reply;
+    }
+
+    throw new Error("No API configured");
+  } catch (err) {
+    undoUserPush();
+    throw err;
+  }
 }
 
 // ============================================================
@@ -1561,7 +1622,7 @@ async function resendEnrollmentEmails(email) {
     const data = await res.json();
     const card = document.getElementById("resendCard");
     if (!res.ok || !data.ok) {
-      card.innerHTML = `<strong>⚠️ Couldn't re-send</strong><br><br>${data.error || "Unknown error"}`;
+      card.innerHTML = `<strong>⚠️ Couldn't re-send</strong><br><br>${esc(data.error || "Unknown error")}`;
       card.style.background = "#fef9c3";
       card.style.border = "2px solid #f59e0b";
       // Failure: let Claude follow up with apology + fallback info
@@ -1596,7 +1657,7 @@ async function resendEnrollmentEmails(email) {
     }
   } catch (err) {
     const card = document.getElementById("resendCard");
-    card.innerHTML = `<strong>⚠️ Network error</strong><br><br>${err.message}`;
+    card.innerHTML = `<strong>⚠️ Network error</strong><br><br>${esc(err.message)}`;
     card.style.background = "#fef9c3";
     card.style.border = "2px solid #f59e0b";
   }
@@ -1637,7 +1698,7 @@ async function submitEnrollment(payload) {
     const data = await res.json();
     const card = document.getElementById("enrollmentSubmittingCard");
     if (!res.ok || !data.ok) {
-      card.innerHTML = `<strong>⚠️ Couldn't create your enrollment</strong><br><br>${data.error || "Unknown error"}<br><br>Please try again, or email <a href="mailto:info@aatatraining.org">info@aatatraining.org</a>.`;
+      card.innerHTML = `<strong>⚠️ Couldn't create your enrollment</strong><br><br>${esc(data.error || "Unknown error")}<br><br>Please try again, or email <a href="mailto:info@aatatraining.org">info@aatatraining.org</a>.`;
       card.style.background = "#fef9c3";
       card.style.border = "2px solid #f59e0b";
       // Tell Claude what happened so it can recover
@@ -1681,7 +1742,7 @@ async function submitEnrollment(payload) {
     container.scrollTop = container.scrollHeight;
   } catch (err) {
     const card = document.getElementById("enrollmentSubmittingCard");
-    card.innerHTML = `<strong>⚠️ Network error</strong><br><br>${err.message}. Please retry or email <a href="mailto:info@aatatraining.org">info@aatatraining.org</a>.`;
+    card.innerHTML = `<strong>⚠️ Network error</strong><br><br>${esc(err.message)}. Please retry or email <a href="mailto:info@aatatraining.org">info@aatatraining.org</a>.`;
     card.style.background = "#fef9c3";
     card.style.border = "2px solid #f59e0b";
     console.error(err);
@@ -1721,7 +1782,7 @@ async function submitTxLead(payload) {
     const data = await res.json();
     const card = document.getElementById("txLeadCard");
     if (!res.ok || !data.ok) {
-      card.innerHTML = `<strong>⚠️ Couldn't save your details</strong><br><br>${data.error || "Unknown error"}<br><br>Please call Patrick directly at <strong>(281) 676-0356</strong> or email <a href="mailto:patrickaata@gmail.com">patrickaata@gmail.com</a>.`;
+      card.innerHTML = `<strong>⚠️ Couldn't save your details</strong><br><br>${esc(data.error || "Unknown error")}<br><br>Please call Patrick directly at <strong>(281) 676-0356</strong> or email <a href="mailto:patrickaata@gmail.com">patrickaata@gmail.com</a>.`;
       card.style.background = "#fef9c3";
       card.style.border = "2px solid #f59e0b";
       conversationHistory.push({
@@ -1766,7 +1827,7 @@ async function submitTxLead(payload) {
     container.scrollTop = container.scrollHeight;
   } catch (err) {
     const card = document.getElementById("txLeadCard");
-    card.innerHTML = `<strong>⚠️ Network error</strong><br><br>${err.message}. Please call Patrick at <strong>(281) 676-0356</strong>.`;
+    card.innerHTML = `<strong>⚠️ Network error</strong><br><br>${esc(err.message)}. Please call Patrick at <strong>(281) 676-0356</strong>.`;
     card.style.background = "#fef9c3";
     card.style.border = "2px solid #f59e0b";
     console.error(err);
