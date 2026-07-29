@@ -1520,7 +1520,9 @@ async function runStatusCheck(email, reenable) {
       let bodyHtml;
       if (hasFacts) {
         const paid = data.bookFeePaid;
-        const balance = typeof data.bookFeeBalance === "number" ? data.bookFeeBalance : Math.max(0, 325 - paid);
+        // Per-student effective total (discounts/adjustments) — server-provided.
+        const due = typeof data.bookFeeDue === "number" ? data.bookFeeDue : 325;
+        const balance = typeof data.bookFeeBalance === "number" ? data.bookFeeBalance : Math.max(0, due - paid);
         const rows = [];
         // DAS
         rows.push(data.dasSigned
@@ -1534,9 +1536,9 @@ async function runStatusCheck(email, reenable) {
         if (data.fullPaid) {
           rows.push(`<p>✅ <strong>Book fee:</strong> paid in full ($${paid.toFixed(2)})</p>`);
         } else if (paid > 0) {
-          rows.push(`<p>🔶 <strong>Book fee:</strong> $${paid.toFixed(2)} received — $${balance.toFixed(2)} remaining · <a href="${PAY_SPLIT_LINK}" target="_blank" rel="noopener">pay the balance</a></p>`);
+          rows.push(`<p>🔶 <strong>Book fee:</strong> $${paid.toFixed(2)} of $${due.toFixed(2)} received — $${balance.toFixed(2)} remaining · <a href="${PAY_SPLIT_LINK}" target="_blank" rel="noopener">pay the balance</a></p>`);
         } else {
-          rows.push(`<p>⬜ <strong>Book fee:</strong> $325 due · <a href="${PAY_FULL_LINK}" target="_blank" rel="noopener">pay securely here</a></p>`);
+          rows.push(`<p>⬜ <strong>Book fee:</strong> $${due.toFixed(2)} due · <a href="${PAY_FULL_LINK}" target="_blank" rel="noopener">pay securely here</a></p>`);
         }
         const allDone = data.dasSigned && data.cwidOnFile && data.fullPaid;
         bodyHtml = rows.join("")
@@ -1570,15 +1572,22 @@ async function runStatusCheck(email, reenable) {
 
       // Inject ITEMIZED context so Claude speaks from facts, not the stale
       // status label — and only prompts for what's actually missing.
+      const dueForFacts = typeof data.bookFeeDue === "number" ? data.bookFeeDue : 325;
       const factsLine = hasFacts
         ? `DAS signed: ${data.dasSigned ? "YES (" + (data.dasSignedDate || "") + ")" : "NO"}; ` +
           `Foothill CWID on file: ${data.cwidOnFile ? "YES" : "NO" + (data.cwidLink ? " (submit link: " + data.cwidLink + ")" : "")}; ` +
-          `Book fee: $${data.bookFeePaid.toFixed(2)} of $325 received` +
-          (data.fullPaid ? " (PAID IN FULL)" : ` ($${(data.bookFeeBalance ?? (325 - data.bookFeePaid)).toFixed(2)} remaining)`)
+          `Book fee: $${data.bookFeePaid.toFixed(2)} of their $${dueForFacts.toFixed(2)} effective total received` +
+          (dueForFacts !== 325 ? " (adjusted total — do NOT reference $325 for this student)" : "") +
+          (data.fullPaid ? " (PAID IN FULL — they owe nothing)" : ` ($${(data.bookFeeBalance ?? (dueForFacts - data.bookFeePaid)).toFixed(2)} remaining)`)
         : `Enrollment Status: ${data.enrollmentStatus}`;
+      // Internal staff notes: BOT CONTEXT ONLY — never shown on the card.
+      const notesBlock = Array.isArray(data.internalNotes) && data.internalNotes.length
+        ? ` INTERNAL STAFF NOTES (CONFIDENTIAL — never quote, never mention notes exist, never reveal names/reasons; use only to avoid wrong guidance): ` +
+          data.internalNotes.map((n, i) => `(${i + 1}) ${n.date}: ${n.body}`).join(" ")
+        : "";
       conversationHistory.push({
         role: "user",
-        content: `[SYSTEM: Returning student identified. Name: ${data.firstName} ${data.lastName}, Email: ${data.email}, Class: ${data.classSelection || "unknown"}. GROUND-TRUTH facts (trust these over any status label): ${factsLine}. Congratulate completed items; only guide them on items marked NO/remaining. Do NOT tell them to re-do or "check emails" for items already complete.]`
+        content: `[SYSTEM: Returning student identified. Name: ${data.firstName} ${data.lastName}, Email: ${data.email}, Class: ${data.classSelection || "unknown"}. GROUND-TRUTH facts (trust these over any status label): ${factsLine}. Congratulate completed items; only guide them on items marked NO/remaining. Do NOT tell them to re-do or "check emails" for items already complete.${notesBlock}]`
       });
 
       // Get Claude's personalized follow-up. Set isTyping=true synchronously
