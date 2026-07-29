@@ -1509,17 +1509,50 @@ async function runStatusCheck(email, reenable) {
       sessionMeta.firstName = data.firstName || sessionMeta.firstName;
       if (data.contactId) sessionMeta.contactId = data.contactId;
       flushLog(false);
-      // Show status card
-      const statusMessages = {
-        "Step 1 Complete": "Your enrollment form is submitted! We've sent you the DAS 1 Apprenticeship Agreement via email for e-signature. Please check your inbox (and spam folder) for an email from Box Sign.",
-        "DAS Sent": "The DAS 1 form has been sent to your email for e-signature. Please check your inbox (and spam folder) for an email from Box Sign and sign the document.",
-        "DAS Signed": "Your DAS form is signed! We've sent you two emails — one with Foothill College enrollment instructions and one about the book fee payment. Check your inbox!",
-        "Emails Sent": "We've sent you two important emails: (1) Foothill College application instructions, and (2) Book fee payment details ($325). Please check your inbox and complete both steps.",
-        "Payment Received": "Payment received! Your enrollment is almost complete.",
-        "Fully Enrolled": "You're fully enrolled! Welcome to AATA! 🎉 Your class details have been confirmed."
-      };
+      // Show status card built from GROUND-TRUTH facts (DAS signed date,
+      // CWID on file, book fee dollars), not the manually maintained
+      // Enrollment_Status__c which can lag reality. Falls back to the old
+      // status-only card if the proxy doesn't return the itemized fields.
+      const PAY_FULL_LINK = "https://buy.stripe.com/aFa00i46EfPVevB6vh0VO00";
+      const PAY_SPLIT_LINK = "https://buy.stripe.com/7sY14mgTqgTZ4V1cTF0VO01";
+      const hasFacts = (typeof data.bookFeePaid === "number") && (data.cwidOnFile !== undefined);
 
-      const statusMsg = statusMessages[data.enrollmentStatus] || `Current status: ${esc(data.enrollmentStatus)}`;
+      let bodyHtml;
+      if (hasFacts) {
+        const paid = data.bookFeePaid;
+        const balance = typeof data.bookFeeBalance === "number" ? data.bookFeeBalance : Math.max(0, 325 - paid);
+        const rows = [];
+        // DAS
+        rows.push(data.dasSigned
+          ? `<p>✅ <strong>DAS 1 Agreement:</strong> signed${data.dasSignedDate ? " (" + esc(data.dasSignedDate) + ")" : ""}</p>`
+          : `<p>⬜ <strong>DAS 1 Agreement:</strong> not signed yet — check your email for the Box Sign request</p>`);
+        // CWID
+        rows.push(data.cwidOnFile
+          ? `<p>✅ <strong>Foothill CWID:</strong> on file</p>`
+          : `<p>⬜ <strong>Foothill CWID:</strong> needed${data.cwidLink ? ` — <a href="${esc(data.cwidLink)}" target="_blank" rel="noopener">submit it here in 10 seconds</a>` : ""}</p>`);
+        // Book fee
+        if (data.fullPaid) {
+          rows.push(`<p>✅ <strong>Book fee:</strong> paid in full ($${paid.toFixed(2)})</p>`);
+        } else if (paid > 0) {
+          rows.push(`<p>🔶 <strong>Book fee:</strong> $${paid.toFixed(2)} received — $${balance.toFixed(2)} remaining · <a href="${PAY_SPLIT_LINK}" target="_blank" rel="noopener">pay the balance</a></p>`);
+        } else {
+          rows.push(`<p>⬜ <strong>Book fee:</strong> $325 due · <a href="${PAY_FULL_LINK}" target="_blank" rel="noopener">pay securely here</a></p>`);
+        }
+        const allDone = data.dasSigned && data.cwidOnFile && data.fullPaid;
+        bodyHtml = rows.join("")
+          + (allDone ? `<p>🎉 Everything on our side is complete — you're all set!</p>` : "");
+      } else {
+        // Legacy fallback (old proxy without itemized fields)
+        const statusMessages = {
+          "Step 1 Complete": "Your enrollment form is submitted! Check your inbox for the DAS 1 e-signature email from Box Sign.",
+          "DAS Sent": "The DAS 1 form was sent to your email for e-signature. Check your inbox (and spam).",
+          "DAS Signed": "Your DAS is signed! Watch for the Foothill + book-fee emails.",
+          "Emails Sent": "Check your email for the Foothill College application + book fee payment instructions.",
+          "Payment Received": "Payment received! Your enrollment is almost complete.",
+          "Fully Enrolled": "You're fully enrolled! Welcome to AATA! 🎉"
+        };
+        bodyHtml = `<p>${statusMessages[data.enrollmentStatus] || `Current status: ${esc(data.enrollmentStatus)}`}</p>`;
+      }
 
       const card = document.createElement("div");
       card.className = "message assistant";
@@ -1528,18 +1561,24 @@ async function runStatusCheck(email, reenable) {
         <div class="status-card">
           <div class="status-card-inner">
             <h3>Welcome back, ${esc(data.firstName)}!</h3>
-            <p><strong>Enrollment Status:</strong> ${esc(data.enrollmentStatus)}</p>
-            <p>${statusMsg}</p>
+            ${bodyHtml}
             ${data.classSelection ? `<p><strong>Class:</strong> ${esc(data.classSelection)}</p>` : ""}
           </div>
         </div>
       `;
       container.appendChild(card);
 
-      // Inject context into conversation for Claude
+      // Inject ITEMIZED context so Claude speaks from facts, not the stale
+      // status label — and only prompts for what's actually missing.
+      const factsLine = hasFacts
+        ? `DAS signed: ${data.dasSigned ? "YES (" + (data.dasSignedDate || "") + ")" : "NO"}; ` +
+          `Foothill CWID on file: ${data.cwidOnFile ? "YES" : "NO" + (data.cwidLink ? " (submit link: " + data.cwidLink + ")" : "")}; ` +
+          `Book fee: $${data.bookFeePaid.toFixed(2)} of $325 received` +
+          (data.fullPaid ? " (PAID IN FULL)" : ` ($${(data.bookFeeBalance ?? (325 - data.bookFeePaid)).toFixed(2)} remaining)`)
+        : `Enrollment Status: ${data.enrollmentStatus}`;
       conversationHistory.push({
         role: "user",
-        content: `[SYSTEM: Returning student identified. Name: ${data.firstName} ${data.lastName}, Email: ${data.email}, Enrollment Status: ${data.enrollmentStatus}, Class: ${data.classSelection || "unknown"}. Guide them based on their current status.]`
+        content: `[SYSTEM: Returning student identified. Name: ${data.firstName} ${data.lastName}, Email: ${data.email}, Class: ${data.classSelection || "unknown"}. GROUND-TRUTH facts (trust these over any status label): ${factsLine}. Congratulate completed items; only guide them on items marked NO/remaining. Do NOT tell them to re-do or "check emails" for items already complete.]`
       });
 
       // Get Claude's personalized follow-up. Set isTyping=true synchronously
