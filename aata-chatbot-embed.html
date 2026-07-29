@@ -1177,6 +1177,10 @@ CRITICAL FORMAT RULES for the marker:
 - Then say: "Watch your email for the DAS 1 Apprenticeship Agreement from Box Sign — usually arrives in 1-2 minutes. After you sign, two more emails will follow with the Foothill College and payment instructions."
 
 ### Returning Students (Status Check):
+- You CAN look up a student's live enrollment status via the [CHECK_STATUS] marker. Never say you "don't have access" to a lookup system.
+- When a student asks to check/confirm their enrollment status: ask for the email they enrolled with (if you don't have it), then reply with one short sentence like "One moment — looking up your enrollment now…" ending with the marker on its own line, as the LAST thing in the message:
+  [CHECK_STATUS]{"email":"their@email.com"}
+  (JSON on one line, double quotes, exact key "email". Do not explain the marker.)
 - If the system provides a [SYSTEM: Returning student...] message, use the enrollment status to guide them:
   * Step 1 Complete / DAS Sent → Tell them to check email for the DAS form
   * DAS Signed / Emails Sent → Tell them to check email for Foothill and payment instructions
@@ -1472,6 +1476,20 @@ async function submitStatusCheck() {
     if (submitBtn) submitBtn.disabled = false;
   };
 
+  await runStatusCheck(email, reenable);
+}
+
+// Core status lookup + card render. Called by the "Check my enrollment
+// status" button flow (with a reenable callback for its email input) AND
+// by the [CHECK_STATUS] marker when a student asks in plain chat.
+async function runStatusCheck(email, reenable) {
+  reenable = reenable || function () {};
+  const emailLooksValid = /^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/.test(email);
+  if (!emailLooksValid) {
+    renderMessage("assistant", "That doesn't look like a complete email address. Can you double-check it?");
+    return;
+  }
+
   // Show typing
   showTyping();
 
@@ -1675,6 +1693,24 @@ function renderMessage(role, text) {
       return;
     }
     resendEnrollmentEmails(payload.email);
+    return;
+  }
+
+  // Handle [CHECK_STATUS]{"email":"..."} marker — a student asked to check
+  // their enrollment status in plain chat (not via the quick button). Run
+  // the same live Salesforce lookup + status card the button flow uses.
+  const statusMatch = remaining.match(/\[CHECK_STATUS\]\s*(\{[\s\S]*?\})\s*$/);
+  if (statusMatch) {
+    const before = remaining.slice(0, statusMatch.index).trim();
+    if (before) renderMessageBubble(role, before);
+    let payload;
+    try { payload = JSON.parse(statusMatch[1]); }
+    catch (e) {
+      renderMessageBubble(role, "⚠️ I couldn't read that email correctly. Can you type it again?");
+      console.error("CHECK_STATUS JSON parse failed:", e, statusMatch[1]);
+      return;
+    }
+    runStatusCheck(String(payload.email || "").trim());
     return;
   }
 
