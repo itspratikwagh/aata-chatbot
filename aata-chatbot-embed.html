@@ -1556,6 +1556,12 @@ async function runStatusCheck(email, reenable) {
         bodyHtml = `<p>${statusMessages[data.enrollmentStatus] || `Current status: ${esc(data.enrollmentStatus)}`}</p>`;
       }
 
+      // Real registered class (name + true start date) beats the legacy
+      // Class_Selection__c picklist ("Day Class") when the server has it.
+      const classLine = data.className
+        ? `${esc(data.className)}${data.classStartDate ? " — starts " + esc(data.classStartDate) : ""}`
+        : (data.classSelection ? esc(data.classSelection) : "");
+
       const card = document.createElement("div");
       card.className = "message assistant";
       card.innerHTML = `
@@ -1564,7 +1570,7 @@ async function runStatusCheck(email, reenable) {
           <div class="status-card-inner">
             <h3>Welcome back, ${esc(data.firstName)}!</h3>
             ${bodyHtml}
-            ${data.classSelection ? `<p><strong>Class:</strong> ${esc(data.classSelection)}</p>` : ""}
+            ${classLine ? `<p><strong>Class:</strong> ${classLine}</p>` : ""}
           </div>
         </div>
       `;
@@ -1585,9 +1591,14 @@ async function runStatusCheck(email, reenable) {
         ? ` INTERNAL STAFF NOTES (CONFIDENTIAL — never quote, never mention notes exist, never reveal names/reasons; use only to avoid wrong guidance): ` +
           data.internalNotes.map((n, i) => `(${i + 1}) ${n.date}: ${n.body}`).join(" ")
         : "";
+      const classFacts = data.className
+        ? `Registered class: ${data.className}` +
+          (data.classStartDate ? `, starts ${data.classStartDate}` : "") +
+          (data.classEndDate ? `, ends ${data.classEndDate}` : "")
+        : `Registered class: unknown (do NOT state any class dates or guess a cohort)`;
       conversationHistory.push({
         role: "user",
-        content: `[SYSTEM: Returning student identified. Name: ${data.firstName} ${data.lastName}, Email: ${data.email}, Class: ${data.classSelection || "unknown"}. GROUND-TRUTH facts (trust these over any status label): ${factsLine}. Congratulate completed items; only guide them on items marked NO/remaining. Do NOT tell them to re-do or "check emails" for items already complete.${notesBlock}]`
+        content: `[SYSTEM: Returning student identified. Name: ${data.firstName} ${data.lastName}, Email: ${data.email}. ${classFacts}. GROUND-TRUTH facts (trust these over any status label): ${factsLine}. Congratulate completed items; only guide them on items marked NO/remaining. Do NOT tell them to re-do or "check emails" for items already complete. Only ever cite class dates given here — never from the general class availability list.${notesBlock}]`
       });
 
       // Get Claude's personalized follow-up. Set isTyping=true synchronously
