@@ -1648,7 +1648,7 @@ async function runStatusCheck(email, reenable) {
               // The card link is a FIXED $325 charge — offering it to someone
               // who owes a partial balance would overcharge them.
               (data.bookFeePaid > 0
-                ? ` — IMPORTANT: this is a PARTIAL balance, so do NOT give them the Stripe card link (it charges the full $325). Tell them to Zelle exactly $${(data.bookFeeBalance ?? (dueForFacts - data.bookFeePaid)).toFixed(2)} to dydx-ndt with their name in the memo, or to reply/ask and we'll send a card link for that exact amount.`
+                ? ` — IMPORTANT: this is a PARTIAL balance, so do NOT give them the Stripe card link (it charges the full $325). Tell them to Zelle exactly $${(data.bookFeeBalance ?? (dueForFacts - data.bookFeePaid)).toFixed(2)} to dydx-ndt with their name in the memo, or to email info@aatatraining.org to request a card link for that exact amount. Do NOT promise that you personally will send a link — you cannot; point them to info@aatatraining.org.`
                 : ""))
         : `Enrollment Status: ${data.enrollmentStatus}`;
       // Internal staff notes: BOT CONTEXT ONLY — never shown on the card.
