@@ -1554,7 +1554,11 @@ async function runStatusCheck(email, reenable) {
         isTyping = false;
       }, 500);
 
-    } else if (data.found && data.enrollmentStatus) {
+    // Gate on `found` alone, NOT on enrollmentStatus: that field is manually
+    // maintained and is null for plenty of real students (e.g. past cohorts),
+    // who were being told "No enrollment found" while the server was returning
+    // a full set of ground-truth facts for them.
+    } else if (data.found) {
       // Returning student — capture identity on the conversation log
       sessionMeta.email = email;
       sessionMeta.firstName = data.firstName || sessionMeta.firstName;
@@ -1605,7 +1609,9 @@ async function runStatusCheck(email, reenable) {
           "Payment Received": "Payment received! Your enrollment is almost complete.",
           "Fully Enrolled": "You're fully enrolled! Welcome to AATA! 🎉"
         };
-        bodyHtml = `<p>${statusMessages[data.enrollmentStatus] || `Current status: ${esc(data.enrollmentStatus)}`}</p>`;
+        bodyHtml = data.enrollmentStatus
+          ? `<p>${statusMessages[data.enrollmentStatus] || `Current status: ${esc(data.enrollmentStatus)}`}</p>`
+          : `<p>We found your record. For an up-to-date rundown of your enrollment steps, ask below or email info@aatatraining.org.</p>`;
       }
 
       // Real registered class (name + true start date) beats the legacy
