@@ -1071,7 +1071,7 @@ IMPORTANT: Spots are limited. Always mention how many spots are left to create u
 - California Residents: Tuition is FREE. The $7,495 course fee is fully waived (state-funded apprenticeship program).
 - Texas Residents: Funding available — contact Patrick Kratochvil at (281) 676-0356 or patrickaata@gmail.com for details
 - Only additional cost: $325 book fee for ASNT books (brand new hard copies shipped directly from ASNT to student's home via FedEx)
-- Book fee can be paid in one installment OR split into two equal payments ($162.50 each)
+- Book fee can be paid all at once, or in installments via Klarna at Stripe checkout (Klarna handles the split automatically)
 - Out-of-State Residents: Funding is handled on a case-by-case basis. If someone from out of state asks about funding (including veterans), direct them to leave a message at https://www.aatatraining.org/apply
 - **CRITICAL — state funding ONLY applies to the instructor-led 400-hour program.** Self-paced courses (via ndtvideolibrary.com) are NOT covered by California or Texas state funding — those are out-of-pocket.
 
@@ -1082,10 +1082,11 @@ IMPORTANT: Spots are limited. Always mention how many spots are left to create u
 - Do NOT proactively mention veteran benefits — only address them if the student raises the topic.
 - Do NOT ask if someone is a veteran as a qualifying question.
 
-### Book Fee Payment ($325):
-- Pay securely online (card, Apple Pay, or bank transfer): https://buy.stripe.com/aFa00i46EfPVevB6vh0VO00
-- To split into two payments of $162.50 each, use the split link and pay it twice: https://buy.stripe.com/7sY14mgTqgTZ4V1cTF0VO01
-- IMPORTANT: at checkout, the student must enter the SAME email they enrolled with in the "Enrollment email" field so the payment matches their record.
+### Book Fee Payment ($325) — mention ZELLE FIRST, then card:
+- **Zelle (preferred, no processing fees):** send to the Zelle tag **dydx-ndt** (business name: DYDX NDT LLC). Tell the student to include their FULL NAME and enrollment email in the Zelle memo so we can match it. Zelle payments are confirmed by AATA staff, usually within one business day.
+- **Card / Apple Pay / bank transfer:** https://buy.stripe.com/aFa00i46EfPVevB6vh0VO00
+- Want to pay in installments? Klarna is offered right at that Stripe checkout and splits the $325 automatically. There is NO separate split-payment link — never offer one.
+- IMPORTANT: at card checkout, the student must enter the SAME email they enrolled with in the "Enrollment email" field so the payment matches their record.
 - Full amount due at least 2 weeks before class starts (or before the class fills — paid-in-full students get priority once full).
 
 ## HOW CLASSES ACTUALLY WORK (Daily Structure)
@@ -1564,7 +1565,7 @@ async function runStatusCheck(email, reenable) {
       // Enrollment_Status__c which can lag reality. Falls back to the old
       // status-only card if the proxy doesn't return the itemized fields.
       const PAY_FULL_LINK = "https://buy.stripe.com/aFa00i46EfPVevB6vh0VO00";
-      const PAY_SPLIT_LINK = "https://buy.stripe.com/7sY14mgTqgTZ4V1cTF0VO01";
+      const ZELLE_TAG = "dydx-ndt";
       const hasFacts = (typeof data.bookFeePaid === "number") && (data.cwidOnFile !== undefined);
 
       let bodyHtml;
@@ -1586,9 +1587,10 @@ async function runStatusCheck(email, reenable) {
         if (data.fullPaid) {
           rows.push(`<p>✅ <strong>Book fee:</strong> paid in full ($${paid.toFixed(2)})</p>`);
         } else if (paid > 0) {
-          rows.push(`<p>🔶 <strong>Book fee:</strong> $${paid.toFixed(2)} of $${due.toFixed(2)} received — $${balance.toFixed(2)} remaining · <a href="${PAY_SPLIT_LINK}" target="_blank" rel="noopener">pay the balance</a></p>`);
+          // Odd balances have no fixed-amount card link — Zelle takes any amount.
+          rows.push(`<p>🔶 <strong>Book fee:</strong> $${paid.toFixed(2)} of $${due.toFixed(2)} received — $${balance.toFixed(2)} remaining · Zelle the balance to <strong>${ZELLE_TAG}</strong> (put your name in the memo), or ask us for a card link</p>`);
         } else {
-          rows.push(`<p>⬜ <strong>Book fee:</strong> $${due.toFixed(2)} due · <a href="${PAY_FULL_LINK}" target="_blank" rel="noopener">pay securely here</a></p>`);
+          rows.push(`<p>⬜ <strong>Book fee:</strong> $${due.toFixed(2)} due · Zelle to <strong>${ZELLE_TAG}</strong> (DYDX NDT LLC) with your name in the memo, or <a href="${PAY_FULL_LINK}" target="_blank" rel="noopener">pay by card here</a></p>`);
         }
         const allDone = data.dasSigned && data.cwidOnFile && data.fullPaid;
         bodyHtml = rows.join("")
