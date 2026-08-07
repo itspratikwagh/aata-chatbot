@@ -1642,7 +1642,14 @@ async function runStatusCheck(email, reenable) {
           `Foothill CWID on file: ${data.cwidOnFile ? "YES" : "NO" + (data.cwidLink ? " (submit link: " + data.cwidLink + ")" : "")}; ` +
           `Book fee: $${data.bookFeePaid.toFixed(2)} of their $${dueForFacts.toFixed(2)} effective total received` +
           (dueForFacts !== 325 ? " (adjusted total — do NOT reference $325 for this student)" : "") +
-          (data.fullPaid ? " (PAID IN FULL — they owe nothing)" : ` ($${(data.bookFeeBalance ?? (dueForFacts - data.bookFeePaid)).toFixed(2)} remaining)`)
+          (data.fullPaid
+            ? " (PAID IN FULL — they owe nothing)"
+            : ` ($${(data.bookFeeBalance ?? (dueForFacts - data.bookFeePaid)).toFixed(2)} remaining)` +
+              // The card link is a FIXED $325 charge — offering it to someone
+              // who owes a partial balance would overcharge them.
+              (data.bookFeePaid > 0
+                ? ` — IMPORTANT: this is a PARTIAL balance, so do NOT give them the Stripe card link (it charges the full $325). Tell them to Zelle exactly $${(data.bookFeeBalance ?? (dueForFacts - data.bookFeePaid)).toFixed(2)} to dydx-ndt with their name in the memo, or to reply/ask and we'll send a card link for that exact amount.`
+                : ""))
         : `Enrollment Status: ${data.enrollmentStatus}`;
       // Internal staff notes: BOT CONTEXT ONLY — never shown on the card.
       const notesBlock = Array.isArray(data.internalNotes) && data.internalNotes.length
