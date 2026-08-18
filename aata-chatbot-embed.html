@@ -780,9 +780,13 @@ let config = {
   // skip the dead proxy. Add more URLs here to add more redundancy.
   //
   // Added Render backup after Railway-wide outage on 2026-05-19.
+  // Render REMOVED from rotation 2026-08-06: it only deploys manually, so it
+  // was months stale and served pre-committed-seats code — students were told
+  // a class with 10 open seats was "full" whenever a Railway hiccup failed
+  // over to it. A backup that gives wrong answers is worse than an error
+  // message. Re-add it ONLY once Render auto-deploys from GitHub main.
   proxyBases: [
     "https://aata-proxy-production.up.railway.app",  // primary (Railway)
-    "https://aata-proxy.onrender.com",               // backup (Render free tier)
   ],
   proxyTimeoutMs: 8000, // per-attempt timeout before failing over to next base
   // Legacy single-URL field — kept in sync with the current preferred proxy
