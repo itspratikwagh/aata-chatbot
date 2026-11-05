@@ -1865,6 +1865,25 @@ function renderMessage(role, text) {
     return;
   }
 
+  // Handle [JOIN_WAITLIST]{...json...} marker — a CA student wants a FULL
+  // class. POST to /api/join-waitlist (creates a Waitlist_Entry__c only, no
+  // Contact/registration, so no enrollment emails fire).
+  const waitMatch = remaining.match(/\[JOIN_WAITLIST\]\s*(\{[\s\S]*?\})\s*$/);
+  if (waitMatch) {
+    const before = remaining.slice(0, waitMatch.index).trim();
+    if (before) renderMessageBubble(role, before);
+    let payload;
+    try {
+      payload = JSON.parse(waitMatch[1]);
+    } catch (e) {
+      renderMessageBubble(role, "⚠️ I had trouble saving your waitlist request. Please try again, or email info@aatatraining.org with your name and the class you want.");
+      console.error("JOIN_WAITLIST JSON parse failed:", e, waitMatch[1]);
+      return;
+    }
+    submitWaitlist(payload);
+    return;
+  }
+
   // Handle [CREATE_TX_LEAD]{...json...} marker — Claude has collected 4 fields
   // from a Texas prospect. POST to /api/create-tx-lead, show success card
   // with Patrick's Google Form link.
@@ -2121,6 +2140,92 @@ async function submitTxLead(payload) {
   } catch (err) {
     const card = document.getElementById("txLeadCard");
     card.innerHTML = `<strong>⚠️ Network error</strong><br><br>${esc(err.message)}. Please call Patrick at <strong>(281) 676-0356</strong>.`;
+    card.style.background = "#fef9c3";
+    card.style.border = "2px solid #f59e0b";
+    console.error(err);
+  }
+}
+
+// Waitlist request for a FULL class → /api/join-waitlist, then a status card.
+let waitlistCardSeq = 0;
+async function submitWaitlist(payload) {
+  sessionMeta.email = payload.email || sessionMeta.email;
+  sessionMeta.phone = payload.phone || sessionMeta.phone;
+  if (payload.fullName && !sessionMeta.firstName) {
+    const parts = String(payload.fullName).trim().split(/\s+/);
+    sessionMeta.firstName = parts[0];
+    sessionMeta.lastName = parts.slice(1).join(" ") || sessionMeta.lastName;
+  }
+
+  const cardId = `waitlistCard${++waitlistCardSeq}`;
+  const container = document.getElementById("messages");
+  const wrapper = document.createElement("div");
+  wrapper.className = "message assistant";
+  wrapper.innerHTML = `
+    <div class="bot-avatar">✈️</div>
+    <div class="bubble" id="${cardId}">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div class="typing-dot" style="background:#00AEEF;width:8px;height:8px;animation:none;"></div>
+        <strong>Adding you to the waitlist…</strong>
+      </div>
+    </div>`;
+  container.appendChild(wrapper);
+  container.scrollTop = container.scrollHeight;
+
+  const followUp = () => setTimeout(async () => {
+    isTyping = true; showTyping();
+    try {
+      const replyText = await callClaudeAPIRaw();
+      hideTyping();
+      renderMessage("assistant", replyText);
+      conversationHistory.push({ role: "assistant", content: replyText });
+    } catch (e) { hideTyping(); }
+    isTyping = false;
+  }, 600);
+
+  try {
+    const res = await fetchProxyWithFallback("/api/join-waitlist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    const card = document.getElementById(cardId);
+    if (!res.ok || !data.ok) {
+      card.innerHTML = `<strong>⚠️ Couldn't add you to the waitlist</strong><br><br>${esc(data.error || "Unknown error")}<br><br>Please email <a href="mailto:info@aatatraining.org">info@aatatraining.org</a> with your name and the class you want.`;
+      card.style.background = "#fef9c3";
+      card.style.border = "2px solid #f59e0b";
+      conversationHistory.push({
+        role: "user",
+        content: `[SYSTEM: Waitlist save failed: ${data.error || "unknown error"}. Apologize briefly and ask them to email info@aatatraining.org with their name and the class they want.]`,
+      });
+    } else {
+      const cls = esc(data.className || "the class");
+      const headline = data.alreadyOnList ? "You're already on the waitlist" : "You're on the waitlist!";
+      const body = data.alreadyOnList
+        ? `You've been on the waitlist for <strong>${cls}</strong> since ${esc(data.requestDate || "earlier")}. Nothing else to do.`
+        : `We've added you to the waitlist for <strong>${cls}</strong>. If a seat opens, AATA will email you at <strong>${esc(payload.email || "")}</strong>.`;
+      card.innerHTML = `
+        <div style="background:linear-gradient(135deg,#f0f9ff,#ecfeff);border:2px solid #00AEEF;border-radius:12px;padding:16px;">
+          <strong style="color:#075985;font-size:15px;">✅ ${headline}</strong>
+          <div style="margin-top:10px;color:#334155;font-size:14px;line-height:1.6;">${body}</div>
+          <div style="margin-top:12px;padding-top:10px;border-top:1px solid #cbd5e1;color:#64748b;font-size:12px;line-height:1.5;">
+            The waitlist doesn't reserve a seat. Questions or changes: <a href="mailto:info@aatatraining.org" style="color:#00AEEF;">info@aatatraining.org</a>
+          </div>
+        </div>`;
+      conversationHistory.push({
+        role: "user",
+        content: data.alreadyOnList
+          ? `[SYSTEM: Waitlist: student was ALREADY on the waitlist for "${data.className}" since ${data.requestDate}. The card shows this. Tell them in one short sentence that they're already on it and nothing more is needed.]`
+          : `[SYSTEM: Waitlist: student ADDED to the waitlist for "${data.className}" (entry ${data.entryNumber || "created"}). The card confirms it. Reply in one or two short sentences: they're on the waitlist, AATA will email them if a seat opens, nothing else to do now. Do not promise a seat or estimate their chances.]`,
+      });
+      flushLog(false);
+    }
+    followUp();
+    container.scrollTop = container.scrollHeight;
+  } catch (err) {
+    const card = document.getElementById(cardId);
+    card.innerHTML = `<strong>⚠️ Network error</strong><br><br>${esc(err.message)}. Please email <a href="mailto:info@aatatraining.org">info@aatatraining.org</a> with your name and the class you want.`;
     card.style.background = "#fef9c3";
     card.style.border = "2px solid #f59e0b";
     console.error(err);
